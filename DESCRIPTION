@@ -1,0 +1,15 @@
+Package: testing.stuff
+Title: Just Testing
+Version: 0.0.0.9000
+Authors@R: 
+    person(given = "Agne",
+           family = "Larsson",
+           role = c("aut", "cre"),
+           email = "agne.larsson@gmail.com")
+Description: Just a test package to try GH Actions stuff
+License: `use_mit_license()`, `use_gpl3_license()` or friends to
+    pick a license
+Encoding: UTF-8
+LazyData: true
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.1.1
