@@ -2,4 +2,4 @@
 Just testing some Github stuff
 
 Todo:
-- See Issues list
+- See konflikt här! >:) Issues list
