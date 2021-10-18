@@ -9,7 +9,7 @@ sum2(x, y)
 \arguments{
 \item{x}{a value to add to y}
 
-\item{y}{a valut to add to x}
+\item{y}{a value to add to x}
 }
 \value{
 the sum of x and y
