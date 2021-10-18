@@ -13,5 +13,4 @@ LazyData: true
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.1.1
 Imports: 
-    DBI (>= 1.0.0),
-    networkD3
+    DBI (>= 1.0.0)
