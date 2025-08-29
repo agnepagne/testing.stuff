@@ -76,10 +76,11 @@ jobs:
         env:
           GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # -----------------------------------------------------------------
-          # Helper: write a line to the GitHub Actions log with a distinctive prefix
-          # -----------------------------------------------------------------
-          log_msg() { echo "::notice title=minioclient‑debug::$1"; }
+          # ---------- PowerShell helper to emit a notice line ----------
+          function Log-Notice {
+            param([string]$Message)
+            Write-Host "::notice title=minioclient-debug::$Message"
+          }
 
           # -----------------------------------------------------------------
           # 1️⃣ Show basic environment info (R, gcc, PATH)
