@@ -1,6 +1,8 @@
 Package: testing.stuff
 Title: Just Testing
 Version: 0.0.0.9000
+Author: Agne Larsson
+Maintainer: Agne Larsson
 Authors@R: 
     person(given = "Agne",
            family = "Larsson",
