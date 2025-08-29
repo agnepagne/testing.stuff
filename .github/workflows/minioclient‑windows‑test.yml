@@ -75,4 +75,74 @@ jobs:
             print(.libPaths())
             cat("\n=== PATH (first 200 chars) ===\n")
             cat(substr(Sys.getenv("PATH"), 1, 200), "\n")
-            cat("GITHUB_PAT set? ", n
+            cat("GITHUB_PAT set? ", nzchar(Sys.getenv("GITHUB_PAT")), "\n")
+            flush.console()
+          '
+
+          # ---------- 2️⃣ Verify the C toolchain is reachable ----------
+          Log-Notice "Checking gcc version (should be from Rtools)…"
+          gcc --version > $null 2>&1
+          if ($LASTEXITCODE -ne 0) {
+            Log-Notice "⚠️  gcc not found – Rtools may not be on PATH"
+            exit 1
+          }
+
+          # ---------- 3️⃣ Run the actual install, capturing all output ----------
+          $LogFile = "$(New-TemporaryFile).log"
+
+          Rscript -e '
+            # Make the token visible to remotes
+            Sys.setenv(GITHUB_PAT = Sys.getenv("GITHUB_PAT"))
+
+            # Redirect both stdout and messages to a log file
+            logPath <- Sys.getenv("LOGFILE")
+            con <- file(logPath, open = "wt")
+            sink(con, type = "output")
+            sink(con, type = "message")
+            on.exit({
+              sink(type = "message")
+              sink()
+              close(con)
+            }, add = TRUE)
+
+            cat("=== Starting install_github() ===\n")
+            flush.console()
+
+            tryCatch(
+              {
+                remotes::install_github(
+                  "cboettig/minioclient",
+                  ref = "main",
+                  upgrade = "never",
+                  dependencies = FALSE,
+                  quiet = FALSE          # show compile output
+                )
+                cat("\n✅ minioclient installed successfully!\n")
+              },
+              error = function(e) {
+                cat("\n❌ Installation failed – error object follows:\n")
+                print(e)
+                quit(status = 1)   # non‑zero exit after logging
+              }
+            )
+          ' LOGFILE=$LogFile
+
+          # ---------- 4️⃣ Dump the log file to the Actions console ----------
+          Log-Notice "===== minioclient install log (start) ====="
+          Get-Content -Path $LogFile | ForEach-Object { Write-Host $_ }
+          Log-Notice "===== minioclient install log (end) ====="
+
+          # ---------- 5️⃣ Exit with the same status R gave us ----------
+          if (Select-String -Path $LogFile -Pattern "✅ minioclient installed successfully!" -Quiet) {
+            exit 0
+          } else {
+            exit 1
+          }
+
+      # ---------------------------------------------------------
+      # 7️⃣ (Optional) Load the package to confirm it works
+      # ---------------------------------------------------------
+      - name: Load minioclient to confirm installation
+        if: success()
+        run: |
+          Rscript -e 'library(minioclient); cat("Package loaded – ready to go!\n")'
