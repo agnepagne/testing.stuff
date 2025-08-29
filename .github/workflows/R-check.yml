@@ -2,10 +2,7 @@ name: R CMD check (Linux + Windows)
 
 # Trigger on pushes and PRs to the default branch (change as needed)
 on:
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
+  workflow_dispatch:
 
 jobs:
   # -------------------------------------------------
