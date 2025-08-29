@@ -31,7 +31,15 @@ jobs:
           path: ${{ env.R_LIBS_USER }}
           key: ${{ runner.os }}-r-${{ hashFiles('**/*.R') }}
           restore-keys: ${{ runner.os }}-r-
-
+          
+      - name: Install minioclient (authenticated)
+        env:
+          GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}   # automatically provided by GitHub Actions
+        run: |
+          Rscript -e '
+          .setenv(GITHUB_PAT = Sys.getenv("GITHUB_PAT"))
+          remotes::install_github("cboettig/minioclient", ref = "main", upgrade = "never")'
+          
       # Install package dependencies (including minioclient) with a tiny retry loop
       - name: Install R dependencies
         run: |
@@ -44,8 +52,6 @@ jobs:
                 error = function(e){ if(i == 3) stop(e) else Sys.sleep(10) }
               )
             }
-            # Explicitly install minioclient so we see any compile‑time errors now
-            remotes::install_github("cboettig/minioclient", upgrade = "never")
           '
 
       # Finally run the check
@@ -88,6 +94,14 @@ jobs:
         run: |
           echo "No extra system libs required for most setups."
 
+      - name: Install minioclient (authenticated)
+        env:
+          GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}   # automatically provided by GitHub Actions
+        run: |
+          Rscript -e '
+          .setenv(GITHUB_PAT = Sys.getenv("GITHUB_PAT"))
+          remotes::install_github("cboettig/minioclient", ref = "main", upgrade = "never")'
+
       # Install dependencies + minioclient (same retry logic as Linux)
       - name: Install R dependencies
         run: |
@@ -99,7 +113,6 @@ jobs:
                 error = function(e){ if(i == 3) stop(e) else Sys.sleep(10) }
               )
             }
-            remotes::install_github("cboettig/minioclient", upgrade = "never")
           '
 
       # Run the check
