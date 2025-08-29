@@ -70,16 +70,67 @@ jobs:
           Rscript -e 'install.packages("remotes")'
 
       # ---------------------------------------------------------
-      # 7️⃣ Install minioclient – **verbose** (shows all compile output)
+      # 7️⃣ Install minioclient – **verbose** (guaranteed output)
       # ---------------------------------------------------------
-      - name: Install minioclient (verbose)
+      - name: Install minioclient (verbose, with forced logging)
         env:
           GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # -----------------------------------------------------------------
+          # Helper: write a line to the GitHub Actions log with a distinctive prefix
+          # -----------------------------------------------------------------
+          log_msg() { echo "::notice title=minioclient‑debug::$1"; }
+
+          # -----------------------------------------------------------------
+          # 1️⃣ Show basic environment info (R, gcc, PATH)
+          # -----------------------------------------------------------------
           Rscript -e '
-            cat("R version:", getRversion(), "\n")
-            cat(".libPaths():", .libPaths(), "\n")
+            cat("=== R session info ===\n")
+            print(sessionInfo())
+            cat("\n=== .libPaths() ===\n")
+            print(.libPaths())
+            cat("\n=== Environment variables (relevant ones) ===\n")
+            cat("PATH=", Sys.getenv("PATH"), "\n")
+            cat("GITHUB_PAT set? ", nzchar(Sys.getenv("GITHUB_PAT")), "\n")
+            flush.console()
+          '
+
+          # -----------------------------------------------------------------
+          # 2️⃣ Verify the C toolchain is reachable (gcc version)
+          # -----------------------------------------------------------------
+          log_msg "Checking gcc version (should be from Rtools)…"
+          gcc --version || (
+            log_msg "⚠️  gcc not found – Rtools may not be on PATH"
+            exit 1
+          )
+
+          # -----------------------------------------------------------------
+          # 3️⃣ Install the ‘remotes’ helper (needed for GitHub installs)
+          # -----------------------------------------------------------------
+          Rscript -e 'install.packages("remotes", repos = "https://cloud.r-project.org")'
+
+          # -----------------------------------------------------------------
+          # 4️⃣ Run the actual install, capturing *all* output to a file
+          # -----------------------------------------------------------------
+          LOGFILE=$(mktemp -t minioclient_install_XXXX.log)
+          Rscript -e '
+            # Ensure the token is visible to remotes
             Sys.setenv(GITHUB_PAT = Sys.getenv("GITHUB_PAT"))
+
+            # Wrapper that writes everything to a log file
+            con <- file(Sys.getenv("LOGFILE"), open = "wt")
+            sink(con, type = "output")
+            sink(con, type = "message")
+            on.exit({
+              sink(type = "message")
+              sink()
+              close(con)
+            }, add = TRUE)
+
+            cat("=== Starting install_github() ===\n")
+            flush.console()
+
+            # Try the install – quiet = FALSE so we see compile output
             tryCatch(
               {
                 remotes::install_github(
@@ -87,17 +138,31 @@ jobs:
                   ref = "main",
                   upgrade = "never",
                   dependencies = FALSE,
-                  quiet = FALSE          # <‑‑ show compilation messages
+                  quiet = FALSE
                 )
                 cat("\n✅ minioclient installed successfully!\n")
               },
               error = function(e) {
-                cat("\n❌ Installation failed – here is the error object:\n")
+                cat("\n❌ Installation failed – error object follows:\n")
                 print(e)
+                # Propagate a non‑zero status after we have written the log
                 quit(status = 1)
               }
             )
-          '
+          ' LOGFILE=$LOGFILE
+
+          # -----------------------------------------------------------------
+          # 5️⃣ Dump the log file to the GitHub Actions console BEFORE exiting
+          # -----------------------------------------------------------------
+          log_msg "===== minioclient install log (start) ====="
+          cat "$LOGFILE"
+          log_msg "===== minioclient install log (end) ====="
+
+          # -----------------------------------------------------------------
+          # 6️⃣ Exit with the same status that R gave us (0 = success, 1 = fail)
+          # -----------------------------------------------------------------
+          EXIT_CODE=$(grep -q "✅ minioclient installed successfully!" "$LOGFILE" && echo 0 || echo 1)
+          exit $EXIT_CODE
 
       # ---------------------------------------------------------
       # 8️⃣ (Optional) Load the package to confirm it works
