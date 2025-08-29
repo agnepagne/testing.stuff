@@ -1,38 +1,48 @@
 name: Test minioclient install (Windows only)
 
-# ------------------------------------------------------------------
-# Run manually – you press the “Run workflow” button whenever you want.
-# ------------------------------------------------------------------
 on:
   workflow_dispatch:          # manual trigger
 
 jobs:
   windows-minioclient:
-    runs-on: windows-latest               # ← only Windows
+    runs-on: windows-latest
     env:
-      # Prevent remotes from treating warnings as errors
-      R_REMOTES_NO_ERRORS_FROM_WARNINGS: true
+      R_REMOTES_NO_ERRORS_FROM_WARNINGS: true   # keep warnings from aborting
 
     steps:
       # ---------------------------------------------------------
-      # 1️⃣ Checkout the repo (not strictly needed for the install,
-      #    but keeps the workspace tidy and lets you reference files)
+      # 1️⃣ Checkout (optional, just keeps the workspace tidy)
       # ---------------------------------------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
 
       # ---------------------------------------------------------
-      # 2️⃣ Install R (includes Rtools automatically)
+      # 2️⃣ Install R (this also pulls in the default Rtools version)
       # ---------------------------------------------------------
       - name: Set up R
         uses: r-lib/actions/setup-r@v2
         with:
-          r-version: '4.4'          # keep the same version you use locally
+          r-version: '4.4'          # same version you use locally
           use-public-rspm: true
-          install-rtools: true       # ensures the MinGW toolchain is on PATH
+          # The flag below tells the action to *add* the Rtools directories
+          # to the PATH after installing them.
+          windows-path-include-rtools: true
 
       # ---------------------------------------------------------
-      # 3️⃣ Install Windows system libraries needed by minioclient
+      # 3️⃣ (Alternative) Explicitly install Rtools via Chocolatey
+      # ---------------------------------------------------------
+      # If you prefer an explicit step, uncomment the block below.
+      # It does the same thing as the flag above, but you’ll see the
+      # installation logs in the Actions UI.
+      #
+      # - name: Install Rtools via Chocolatey
+      #   run: |
+      #     choco install rtools -y
+      #     # Verify that gcc is reachable
+      #     gcc --version
+
+      # ---------------------------------------------------------
+      # 4️⃣ Install additional Windows system libs needed by minioclient
       # ---------------------------------------------------------
       - name: Install OpenSSL, pkg‑config and CMake
         run: |
@@ -41,7 +51,7 @@ jobs:
           choco install cmake -y
 
       # ---------------------------------------------------------
-      # 4️⃣ Cache the user library (speeds up repeated runs)
+      # 5️⃣ Cache the user library (speeds up repeated runs)
       # ---------------------------------------------------------
       - name: Cache R packages
         uses: actions/cache@v3
@@ -51,51 +61,46 @@ jobs:
           restore-keys: windows-r-
 
       # ---------------------------------------------------------
-      # 5️⃣ Install the `remotes` helper package (used to pull from GitHub)
+      # 6️⃣ Install the `remotes` helper package (needed for GitHub installs)
       # ---------------------------------------------------------
       - name: Install remotes package
         env:
-          GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}   # authentication token
+          GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
         run: |
           Rscript -e 'install.packages("remotes")'
 
       # ---------------------------------------------------------
-      # 6️⃣ Install minioclient – **verbose** (shows all compile output)
+      # 7️⃣ Install minioclient – **verbose** (shows all compile output)
       # ---------------------------------------------------------
       - name: Install minioclient (verbose)
         env:
           GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
         run: |
           Rscript -e '
-            # Show some context
             cat("R version:", getRversion(), "\n")
             cat(".libPaths():", .libPaths(), "\n")
-
-            # Make sure the token is visible to remotes
             Sys.setenv(GITHUB_PAT = Sys.getenv("GITHUB_PAT"))
-
-            # Try the install and print any error that occurs
             tryCatch(
               {
                 remotes::install_github(
                   "cboettig/minioclient",
                   ref = "main",
                   upgrade = "never",
-                  dependencies = FALSE,   # only the minioclient source itself
-                  quiet = FALSE          # <‑‑ crucial – show compile output
+                  dependencies = FALSE,
+                  quiet = FALSE          # <‑‑ show compilation messages
                 )
                 cat("\n✅ minioclient installed successfully!\n")
               },
               error = function(e) {
                 cat("\n❌ Installation failed – here is the error object:\n")
-                print(e)                 # prints the full R error message
-                quit(status = 1)         # exit with non‑zero code after printing
+                print(e)
+                quit(status = 1)
               }
             )
           '
 
       # ---------------------------------------------------------
-      # 7️⃣ (Optional) Load the package to prove it works
+      # 8️⃣ (Optional) Load the package to confirm it works
       # ---------------------------------------------------------
       - name: Load minioclient to confirm installation
         if: success()
