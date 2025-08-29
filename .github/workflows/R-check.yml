@@ -1,0 +1,111 @@
+name: R CMD check (Linux + Windows)
+
+# Trigger on pushes and PRs to the default branch (change as needed)
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  # -------------------------------------------------
+  # 1️⃣ Linux job – the simplest platform
+  # -------------------------------------------------
+  linux-check:
+    runs-on: ubuntu-latest
+    env:
+      # Treat warnings as errors so the job fails early if something goes wrong
+      R_REMOTES_NO_ERRORS_FROM_WARNINGS: true
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Install a specific R version (defaults to the latest stable if omitted)
+      - name: Set up R
+        uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: '4.4'          # ← change if you target a different R version
+          use-public-rspm: true     # use the public RSPM binary repo (faster installs)
+
+      # Cache the R library folder between runs (speeds things up)
+      - name: Cache R packages
+        uses: actions/cache@v3
+        with:
+          path: ${{ env.R_LIBS_USER }}
+          key: ${{ runner.os }}-r-${{ hashFiles('**/*.R') }}
+          restore-keys: ${{ runner.os }}-r-
+
+      # Install package dependencies (including minioclient) with a tiny retry loop
+      - name: Install R dependencies
+        run: |
+          Rscript -e '
+            install.packages("remotes")
+            # Try three times – useful if GitHub experiences a brief hiccup
+            for(i in 1:3){
+              tryCatch(
+                remotes::install_deps(dependencies = TRUE, upgrade = "always"),
+                error = function(e){ if(i == 3) stop(e) else Sys.sleep(10) }
+              )
+            }
+            # Explicitly install minioclient so we see any compile‑time errors now
+            remotes::install_github("cboettig/minioclient", upgrade = "never")
+          '
+
+      # Finally run the check
+      - name: R CMD check
+        run: |
+          R CMD check . --as-cran --no-manual --no-build-vignettes
+
+
+  # -------------------------------------------------
+  # 2️⃣ Windows job – mirrors the Linux job but adds Rtools
+  # -------------------------------------------------
+  windows-check:
+    runs-on: windows-latest
+    env:
+      R_REMOTES_NO_ERRORS_FROM_WARNINGS: true
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Install matching R version **and** the correct Rtools automatically
+      - name: Set up R (with Rtools)
+        uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: '4.4'          # keep the same version as Linux for consistency
+          use-public-rspm: true
+
+      # Cache R packages (separate cache per OS)
+      - name: Cache R packages
+        uses: actions/cache@v3
+        with:
+          path: ${{ env.R_LIBS_USER }}
+          key: ${{ runner.os }}-r-${{ hashFiles('**/*.R') }}
+          restore-keys: ${{ runner.os }}-r-
+
+      # (Optional) Install system libraries that minioclient may need.
+      # Most MinIO builds only need a C compiler, which Rtools provides,
+      # but if you hit missing header errors you can add them here,
+      # e.g., `choco install openssl.light -y`.
+      - name: Install optional system libs
+        run: |
+          echo "No extra system libs required for most setups."
+
+      # Install dependencies + minioclient (same retry logic as Linux)
+      - name: Install R dependencies
+        run: |
+          Rscript -e '
+            install.packages("remotes")
+            for(i in 1:3){
+              tryCatch(
+                remotes::install_deps(dependencies = TRUE, upgrade = "always"),
+                error = function(e){ if(i == 3) stop(e) else Sys.sleep(10) }
+              )
+            }
+            remotes::install_github("cboettig/minioclient", upgrade = "never")
+          '
+
+      # Run the check
+      - name: R CMD check
+        run: |
+          R CMD check . --as-cran --no-manual --no-build-vignettes
