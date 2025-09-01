@@ -1,33 +1,35 @@
-name: Test minioclient install (Windows only)
+name: Minioclient install test (Windows)
 
+# Manual trigger only
 on:
-  workflow_dispatch:          # manual trigger
+  workflow_dispatch:
 
 jobs:
-  windows-minioclient:
+  install-minioclient:
     runs-on: windows-latest
     env:
-      R_REMOTES_NO_ERRORS_FROM_WARNINGS: true   # keep warnings from aborting
+      # Prevent warnings from turning into hard errors
+      R_REMOTES_NO_ERRORS_FROM_WARNINGS: true
 
     steps:
       # ---------------------------------------------------------
-      # 1️⃣ Checkout (optional, just keeps the workspace tidy)
+      # 1️⃣ Checkout (optional – keeps the workspace tidy)
       # ---------------------------------------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
 
       # ---------------------------------------------------------
-      # 2️⃣ Install R (also pulls in the default Rtools version)
+      # 2️⃣ Install R (includes the default Rtools toolchain)
       # ---------------------------------------------------------
       - name: Set up R
         uses: r-lib/actions/setup-r@v2
         with:
-          r-version: '4.4'          # same version you use locally
+          r-version: '4.4'                     # same version you use locally
           use-public-rspm: true
-          windows-path-include-rtools: true   # put Rtools on PATH
+          windows-path-include-rtools: true     # puts Rtools on the PATH
 
       # ---------------------------------------------------------
-      # 3️⃣ Install extra Windows system libraries needed by minioclient
+      # 3️⃣ Install the native libraries that minioclient depends on
       # ---------------------------------------------------------
       - name: Install OpenSSL, pkg‑config and CMake
         run: |
@@ -36,70 +38,34 @@ jobs:
           choco install cmake -y
 
       # ---------------------------------------------------------
-      # 4️⃣ Cache the user library (speeds up repeated runs)
+      # 4️⃣ Create a *real* temporary log file
       # ---------------------------------------------------------
-      - name: Cache R packages
-        uses: actions/cache@v3
-        with:
-          path: ${{ env.R_LIBS_USER }}
-          key: windows-r-${{ hashFiles('**/*.R') }}
-          restore-keys: windows-r-
-
-      # ---------------------------------------------------------
-      # 5️⃣ Install the `remotes` helper package (needed for GitHub installs)
-      # ---------------------------------------------------------
-      - name: Install remotes package
-        env:
-          GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+      - name: Prepare temporary log file
+        id: prep-log
         run: |
-          Rscript -e 'install.packages("remotes", repos = "https://cloud.r-project.org")'
+          $logPath = Join-Path $env:TEMP ("minioclient_log_" + [guid]::NewGuid().ToString() + ".txt")
+          # Force creation of an empty file so the path definitely exists
+          New-Item -Path $logPath -ItemType File -Force | Out-Null
+          # Export the path for later steps
+          echo "log_path=$logPath" >> $GITHUB_OUTPUT
+          # Also expose it as an environment variable for the R process
+          echo "MINIO_LOG=$logPath" >> $GITHUB_ENV
 
       # ---------------------------------------------------------
-      # 6️⃣ Install minioclient – **verbose** (forced logging, PowerShell‑compatible)
+      # 5️⃣ Install minioclient and capture *all* output
       # ---------------------------------------------------------
-      - name: Install minioclient (verbose, with forced logging)
+      - name: Install minioclient (full log)
         env:
-          GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}   # token for GitHub API
+          MINIO_LOG: ${{ steps.prep-log.outputs.log_path }}
         run: |
-          # ---------- Helper to emit a GitHub‑Actions notice ----------
-          function Log-Notice {
-            param([string]$Message)
-            Write-Host "::notice title=minioclient-debug::$Message"
-          }
-
-          # ---------- 1️⃣ Show basic environment info ----------
           Rscript -e '
-            cat("=== R session info ===\n")
-            print(sessionInfo())
-            cat("\n=== .libPaths() ===\n")
-            print(.libPaths())
-            cat("\n=== PATH (first 200 chars) ===\n")
-            cat(substr(Sys.getenv("PATH"), 1, 200), "\n")
-            cat("GITHUB_PAT set? ", nzchar(Sys.getenv("GITHUB_PAT")), "\n")
-            flush.console()
-          '
-
-          # ---------- 2️⃣ Verify the C toolchain is reachable ----------
-          Log-Notice "Checking gcc version (should be from Rtools)…"
-          gcc --version > $null 2>&1
-          if ($LASTEXITCODE -ne 0) {
-            Log-Notice "⚠️  gcc not found – Rtools may not be on PATH"
-            exit 1
-          }
-
-          # ---------- 3️⃣ Create a *real* temporary file ----------
-          $LogFile = Join-Path $env:TEMP ("minioclient_" + [guid]::NewGuid().ToString() + ".log")
-          # Export it for the child R process
-          $env:LOGFILE = $LogFile
-
-          # ---------- 4️⃣ Run the actual install, capturing *all* output ----------
-          Rscript -e '
-            # Make the token visible to remotes
+            # Make the token visible to remotes (required for GitHub API calls)
             Sys.setenv(GITHUB_PAT = Sys.getenv("GITHUB_PAT"))
 
-            # Redirect both stdout and messages to the log file supplied via LOGFILE
-            logPath <- Sys.getenv("LOGFILE")
-            con <- file(logPath, open = "wt")
+            # Path of the log file we created in the previous step
+            logFile <- Sys.getenv("MINIO_LOG")
+            con <- file(logFile, open = "wt")
             sink(con, type = "output")
             sink(con, type = "message")
             on.exit({
@@ -108,7 +74,7 @@ jobs:
               close(con)
             }, add = TRUE)
 
-            cat("=== Starting install_github() ===\n")
+            cat("\n=== STARTING minioclient INSTALL ===\n")
             flush.console()
 
             tryCatch(
@@ -118,34 +84,29 @@ jobs:
                   ref = "main",
                   upgrade = "never",
                   dependencies = FALSE,
-                  quiet = FALSE          # show compile output
+                  quiet = FALSE          # show compilation output
                 )
                 cat("\n✅ minioclient installed successfully!\n")
               },
               error = function(e) {
-                cat("\n❌ Installation failed – error object follows:\n")
+                cat("\n❌ Installation FAILED – full error object:\n")
                 print(e)
-                quit(status = 1)   # non‑zero exit after logging
+                quit(status = 1)   # make the step fail
               }
             )
           '
 
-          # ---------- 5️⃣ Dump the log file to the Actions console ----------
-          Log-Notice "===== minioclient install log (start) ====="
-          Get-Content -Path $LogFile | ForEach-Object { Write-Host $_ }
-          Log-Notice "===== minioclient install log (end) ====="
-
-          # ---------- 6️⃣ Exit with the same status R gave us ----------
-          if (Select-String -Path $LogFile -Pattern "✅ minioclient installed successfully!" -Quiet) {
-            exit 0
-          } else {
-            exit 1
-          }
+          # ---------------------------------------------------------
+          # 6️⃣ Print the log file to the Actions UI
+          # ---------------------------------------------------------
+          Write-Host "`n===== minioclient install log (START) ====="
+          Get-Content -Path ${{ steps.prep-log.outputs.log_path }}
+          Write-Host "===== minioclient install log (END) =====`n"
 
       # ---------------------------------------------------------
-      # 7️⃣ (Optional) Load the package to confirm it works
+      # 7️⃣ (Optional) Verify the package can be loaded
       # ---------------------------------------------------------
-      - name: Load minioclient to confirm installation
+      - name: Load minioclient (sanity check)
         if: success()
         run: |
-          Rscript -e 'library(minioclient); cat("Package loaded – ready to go!\n")'
+          Rscript -e 'library(minioclient); cat("✅ Package loaded successfully.\n")'
