@@ -1,6 +1,6 @@
 name: Minioclient install test (Windows)
 
-# Run only when you click “Run workflow”
+# Manual trigger only
 on:
   workflow_dispatch:
 
@@ -38,18 +38,36 @@ jobs:
           choco install cmake -y
 
       # ---------------------------------------------------------
-      # 4️⃣ Install minioclient from GitHub and report the outcome
+      # 4️⃣ Create a *real* temporary log file
       # ---------------------------------------------------------
-      - name: Install minioclient (force‑log to file)
-        env:
-          GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+      - name: Prepare temporary log file
+        id: prep-log
         run: |
-          # Create a real temporary file that definitely exists
+          # Build a unique filename in the runner's Temp folder
           $logPath = Join-Path $env:TEMP ("minioclient_log_" + [guid]::NewGuid().ToString() + ".txt")
-          $env:MINIO_LOG = $logPath
+          # Force creation of an empty file so the path definitely exists
+          New-Item -Path $logPath -ItemType File -Force | Out-Null
+          # Export the path for later steps (both as an output and as an env var)
+          echo "log_path=$logPath" >> $GITHUB_OUTPUT
+          echo "MINIO_LOG=$logPath" >> $GITHUB_ENV
 
+      # ---------------------------------------------------------
+      # 5️⃣ Install minioclient and capture *all* output
+      # ---------------------------------------------------------
+      - name: Install minioclient (full log)
+        env:
+          GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}   # token for GitHub API
+          MINIO_LOG: ${{ steps.prep-log.outputs.log_path }}
+        run: |
           Rscript -e '
+            # ------------------------------------------------------------------
+            # Make the token visible to remotes (required for GitHub API calls)
+            # ------------------------------------------------------------------
             Sys.setenv(GITHUB_PAT = Sys.getenv("GITHUB_PAT"))
+
+            # ------------------------------------------------------------------
+            # Redirect *all* R console output (stdout + messages) to the temp file
+            # ------------------------------------------------------------------
             logFile <- Sys.getenv("MINIO_LOG")
             con <- file(logFile, open = "wt")
             sink(con, type = "output")
@@ -60,9 +78,12 @@ jobs:
               close(con)
             }, add = TRUE)
 
-            cat("=== STARTING minioclient INSTALL ===\n")
+            cat("\n=== STARTING minioclient INSTALL ===\n")
             flush.console()
 
+            # ------------------------------------------------------------------
+            # Try the install and capture any R error object
+            # ------------------------------------------------------------------
             tryCatch(
               {
                 remotes::install_github(
@@ -70,24 +91,29 @@ jobs:
                   ref = "main",
                   upgrade = "never",
                   dependencies = FALSE,
-                  quiet = FALSE
+                  quiet = FALSE          # show compilation output
                 )
                 cat("\n✅ minioclient installed successfully!\n")
               },
               error = function(e) {
-                cat("\n❌ Installation FAILED – error object:\n")
+                cat("\n❌ Installation FAILED – full error object:\n")
                 print(e)
-                quit(status = 1)
+                quit(status = 1)   # keep the step failing
               }
             )
           '
 
-          # Show the whole log in the Actions UI
-          Write-Host "`n===== minioclient install log (START) ====="
-          Get-Content -Path $logPath
-          Write-Host "===== minioclient install log (END) =====`n"
       # ---------------------------------------------------------
-      # 5️⃣ (Optional) Verify the package can be loaded
+      # 6️⃣ Print the log file to the Actions UI
+      # ---------------------------------------------------------
+      - name: Show minioclient install log
+        run: |
+          Write-Host "`n===== minioclient install log (START) ====="
+          Get-Content -Path ${{ steps.prep-log.outputs.log_path }}
+          Write-Host "===== minioclient install log (END) =====`n"
+
+      # ---------------------------------------------------------
+      # 7️⃣ (Optional) Verify the package can be loaded
       # ---------------------------------------------------------
       - name: Load minioclient (sanity check)
         if: success()
