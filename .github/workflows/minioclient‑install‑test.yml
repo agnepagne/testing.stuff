@@ -40,15 +40,28 @@ jobs:
       # ---------------------------------------------------------
       # 4️⃣ Install minioclient from GitHub and report the outcome
       # ---------------------------------------------------------
-      - name: Install minioclient (show full error)
+      - name: Install minioclient (force‑log to file)
         env:
           GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          Rscript -e '
-            # Make the token visible to remotes (required for GitHub API calls)
-            Sys.setenv(GITHUB_PAT = Sys.getenv("GITHUB_PAT"))
+          # Create a real temporary file that definitely exists
+          $logPath = Join-Path $env:TEMP ("minioclient_log_" + [guid]::NewGuid().ToString() + ".txt")
+          $env:MINIO_LOG = $logPath
 
-            cat("\n=== STARTING minioclient INSTALL ===\n")
+          Rscript -e '
+            Sys.setenv(GITHUB_PAT = Sys.getenv("GITHUB_PAT"))
+            logFile <- Sys.getenv("MINIO_LOG")
+            con <- file(logFile, open = "wt")
+            sink(con, type = "output")
+            sink(con, type = "message")
+            on.exit({
+              sink(type = "message")
+              sink()
+              close(con)
+            }, add = TRUE)
+
+            cat("=== STARTING minioclient INSTALL ===\n")
+            flush.console()
 
             tryCatch(
               {
@@ -57,20 +70,22 @@ jobs:
                   ref = "main",
                   upgrade = "never",
                   dependencies = FALSE,
-                  quiet = FALSE          # show compilation output
+                  quiet = FALSE
                 )
                 cat("\n✅ minioclient installed successfully!\n")
               },
               error = function(e) {
-                cat("\n❌ Installation FAILED – here is the full error object:\n")
-                print(e)               # <-- this is the piece you need
-                # Flush the console before quitting so the output is not lost
-                flush.console()
-                quit(status = 1)       # keep the step failing
+                cat("\n❌ Installation FAILED – error object:\n")
+                print(e)
+                quit(status = 1)
               }
             )
           '
 
+          # Show the whole log in the Actions UI
+          Write-Host "`n===== minioclient install log (START) ====="
+          Get-Content -Path $logPath
+          Write-Host "===== minioclient install log (END) =====`n"
       # ---------------------------------------------------------
       # 5️⃣ (Optional) Verify the package can be loaded
       # ---------------------------------------------------------
