@@ -51,7 +51,7 @@ jobs:
           echo "MINIO_LOG=$logPath" >> $GITHUB_ENV
 
       # ---------------------------------------------------------
-      # 5️⃣ Install minioclient – capture **all** console output via shell redirection
+      # 5️⃣ Install minioclient – capture **all** console output via PowerShell redirection
       # ---------------------------------------------------------
       - name: Install minioclient (full log captured by the shell)
         env:
@@ -59,7 +59,7 @@ jobs:
           MINIO_LOG: ${{ steps.prep-log.outputs.log_path }}
         run: |
           # The whole R command is wrapped in single quotes for PowerShell.
-          # We redirect BOTH stdout and stderr to the log file we created.
+          # The `*>` operator writes **all** streams (stdout + stderr) to the log file.
           Rscript -e '
             # -------------------------------------------------------
             # Make the token visible to remotes (required for GitHub API)
@@ -81,7 +81,7 @@ jobs:
             )
 
             cat("\n✅ minioclient installed successfully!\n")
-          ' > ${{ steps.prep-log.outputs.log_path }} 2>&1
+          ' *> ${{ steps.prep-log.outputs.log_path }}
 
       # ---------------------------------------------------------
       # 6️⃣ Show the log file (will always exist now)
