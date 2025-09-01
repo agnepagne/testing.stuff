@@ -67,3 +67,35 @@ jobs:
             Sys.setenv(GITHUB_PAT = Sys.getenv("GITHUB_PAT"))
 
             cat("\n=== STARTING minioclient INSTALL ===\n")
+            flush.console()
+
+            # -------------------------------------------------------
+            # Perform the install – any error will be printed automatically
+            # -------------------------------------------------------
+            remotes::install_github(
+              "cboettig/minioclient",
+              ref = "main",
+              upgrade = "never",
+              dependencies = FALSE,
+              quiet = FALSE          # show compilation output
+            )
+
+            cat("\n✅ minioclient installed successfully!\n")
+          ' > ${{ steps.prep-log.outputs.log_path }} 2>&1
+
+      # ---------------------------------------------------------
+      # 6️⃣ Show the log file (will always exist now)
+      # ---------------------------------------------------------
+      - name: Show minioclient install log
+        run: |
+          Write-Host "`n===== minioclient install log (START) ====="
+          Get-Content -Path ${{ steps.prep-log.outputs.log_path }}
+          Write-Host "===== minioclient install log (END) =====`n"
+
+      # ---------------------------------------------------------
+      # 7️⃣ (Optional) Verify the package can be loaded
+      # ---------------------------------------------------------
+      - name: Load minioclient (sanity check)
+        if: success()
+        run: |
+          Rscript -e 'library(minioclient); cat("✅ Package loaded successfully.\n")'
