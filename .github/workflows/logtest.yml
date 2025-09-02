@@ -18,15 +18,21 @@ jobs:
       # 2️⃣ Prepare a *real* temporary log file (empty file guarantees existence)
       # ---------------------------------------------------------
       - name: Prepare temporary log file
-        id: prep_log                               # <-- underscore instead of dash
+        id: prep_log                                   # <-- step ID (underscore)
         run: |
           # Build a unique filename in the runner's Temp folder
           $logPath = Join-Path $env:TEMP ("log_demo_" + [guid]::NewGuid().ToString() + ".txt")
           # Force creation of an empty file so the path definitely exists
           New-Item -Path $logPath -ItemType File -Force | Out-Null
-          # Export the path for later steps (both as an output and as an env var)
-          echo "log_path=$logPath" >> $GITHUB_OUTPUT
-          echo "DEMO_LOG=$logPath" >> $GITHUB_ENV
+
+          # Export the path for later steps:
+          #   - As an *output* (used with ${{ steps.prep_log.outputs.log_path }})
+          #   - As an *environment variable* (available as $DEMO_LOG)
+          #
+          # IMPORTANT: $env:GITHUB_OUTPUT / $env:GITHUB_ENV are **environment variables**
+          #            – they must be referenced via $env: in PowerShell.
+          echo "log_path=$logPath" >> $env:GITHUB_OUTPUT
+          echo "DEMO_LOG=$logPath" >> $env:GITHUB_ENV
 
       # ---------------------------------------------------------
       # 3️⃣ Run demo commands (everything captured to the log file)
@@ -36,7 +42,7 @@ jobs:
           DEMO_LOG: ${{ steps.prep_log.outputs.log_path }}   # <-- exact path
         run: |
           # The `{ … }` block groups the commands.
-          # `*> $DEMO_LOG` writes **all** streams (stdout, stderr, warnings, etc.) to the file.
+          # `*> $DEMO_LOG` writes **all** streams (stdout, stderr, warnings, verbose, etc.) to the file.
           {
             Write-Host "=== Demo run started at $(Get-Date) ==="
             Write-Host ""
