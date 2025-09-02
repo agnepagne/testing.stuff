@@ -232,57 +232,93 @@ jobs:
   # ==============================================================
   # 5️⃣ Attempt to install minioclient – capture **all** output
   # ==============================================================
-  install-minioclient:
-    name: Install minioclient (full log)
-    needs: [checkout, setup-r, install-system-deps, diagnostics-os]
-    runs-on: windows-latest
-    env:
-      TEMP_DIR: ${{ needs.checkout.outputs.temp-dir }}
-      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}   # needed for private repos (if any)
-    steps:
-      - name: Checkout this repository (again – needed for R session)
-        uses: actions/checkout@v4
 
-      - name: Install R (same version as earlier)
-        uses: r-lib/actions/setup-r@v2
-        with:
-          r-version: '4.4'
-          use-public-rspm: true
+install-minioclient:
+  name: Install minioclient (full log)
+  needs: [checkout, setup-r, install-system-deps, diagnostics-os]
+  runs-on: windows-latest
+  env:
+    TEMP_DIR: ${{ needs.checkout.outputs.temp-dir }}
+    LOG_FILE: "${{ env.TEMP_DIR }}\\minioclient_install.log"
+    # GITHUB_PAT is already provided automatically; no need to set it again.
+  steps:
+    # --------------------------------------------------------------
+    # 1️⃣ Checkout the repository again (required for the R step)
+    # --------------------------------------------------------------
+    - name: Checkout this repository (again – needed for R session)
+      uses: actions/checkout@v4
 
-      - name: Install remotes (again – ensures it’s loaded)
-        run: |
-          install.packages('remotes', repos='https://cloud.r-project.org')
-        shell: Rscript {0}
+    # --------------------------------------------------------------
+    # 2️⃣ Ensure the same R version is installed (matches setup‑r)
+    # --------------------------------------------------------------
+    - name: Install R (v4.4) – same version as earlier
+      uses: r-lib/actions/setup-r@v2
+      with:
+        r-version: '4.4'
+        use-public-rspm: true
 
-      - name: Run minioclient installation and capture **all** streams
-        id: install
-        env:
-          LOG_FILE: "${{ env.TEMP_DIR }}\\minioclient_install.log"
-        run: |
-          # The leading & executes the script block; *> captures everything.
-          & {
-            cat('--- ENV BEFORE INSTALL ---\n')
-            print(Sys.getenv())
-            cat('\n--- START minioclient install ---\n')
+    # --------------------------------------------------------------
+    # 3️⃣ Install the `remotes` package (ensures it’s available)
+    # --------------------------------------------------------------
+    - name: Install R package `remotes`
+      run: |
+        install.packages('remotes', repos='https://cloud.r-project.org')
+      shell: Rscript {0}
 
-            remotes::install_github(
-              "cboettig/minioclient",
-              ref = "main",
-              upgrade = "never",
-              dependencies = FALSE,
-              quiet = FALSE
-            )
+    # --------------------------------------------------------------
+    # 4️⃣ Write the R script that does the heavy lifting
+    # --------------------------------------------------------------
+    - name: Create R script that installs minioclient and prints env
+      run: |
+        $rScript = @"
+# ------------------------------------------------------------
+# 4️⃣1️⃣ Print the R environment (helps debugging)
+# ------------------------------------------------------------
+cat('--- ENV BEFORE INSTALL ---\n')
+print(Sys.getenv())
+cat('\n--- START minioclient install ---\n')
 
-            cat('\n--- END minioclient install ---\n')
-          } *> $env:LOG_FILE
+# ------------------------------------------------------------
+# 4️⃣2️⃣ Install the package from GitHub
+# ------------------------------------------------------------
+remotes::install_github(
+  repo = 'cboettig/minioclient',
+  ref  = 'main',
+  upgrade = 'never',
+  dependencies = FALSE,
+  quiet = FALSE
+)
 
-      - name: Upload the raw install log (and auxiliary logs) as an artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: minioclient-debug-logs
-          path: |
-            ${{ env.TEMP_DIR }}/*.log
-            ${{ env.TEMP_DIR }}/pkgconfig_path.log
+cat('\n--- END minioclient install ---\n')
+"@
+
+        $scriptPath = Join-Path $env:TEMP 'install_minioclient.R'
+        Set-Content -Path $scriptPath -Value $rScript -Encoding UTF8
+        Write-Host "✅ R script written to $scriptPath"
+        # Export the path so the next step can use it
+        echo "R_SCRIPT=$scriptPath" >> $env:GITHUB_ENV
+      shell: pwsh
+
+    # --------------------------------------------------------------
+    # 5️⃣ Execute the R script and capture **all** output (stdout+stderr)
+    # --------------------------------------------------------------
+    - name: Run the R script and capture everything
+      run: |
+        # The `*>` operator redirects *both* stdout and stderr to the log file.
+        Rscript $env:R_SCRIPT *> $env:LOG_FILE
+        Write-Host "✅ Installation finished – log saved to $env:LOG_FILE"
+      shell: pwsh
+
+    # --------------------------------------------------------------
+    # 6️⃣ Upload the log (and any auxiliary files) as an artifact
+    # --------------------------------------------------------------
+    - name: Upload install log as artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: minioclient-debug-logs
+        path: |
+          ${{ env.LOG_FILE }}
+          ${{ env.TEMP_DIR }}/*.log   # catches any other logs you may have created
 
   # ==============================================================
   # 6️⃣ Optional cleanup (keeps the runner tidy)
