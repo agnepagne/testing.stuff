@@ -1,46 +1,39 @@
-name: Minioclient Debug Build
+name: Minioclient Debug Build (Windows)
 
 # ----------------------------------------------------------------------
-# Trigger options – you can keep it manual while you investigate.
+# Trigger – keep it manual while you investigate.
 # ----------------------------------------------------------------------
 on:
-  workflow_dispatch:                     # manual button in the UI
-  # Uncomment one of the following if you want automatic runs:
-  # push:
-  #   branches: [ main ]
-  # pull_request:
-  #   branches: [ main ]
+  workflow_dispatch: {}
 
 # ----------------------------------------------------------------------
-# Global defaults – make the logs easier to read.
+# Global defaults – use PowerShell on Windows.
 # ----------------------------------------------------------------------
 defaults:
   run:
-    shell: pwsh                     # PowerShell is the default on windows‑latest
+    shell: pwsh
 
 jobs:
   # ==============================================================
-  # 1️⃣ Checkout – get both the repo you’re testing and the target repo
+  # 1️⃣ Checkout – get both the repo you’re testing and the minioclient source
   # ==============================================================
-
   checkout:
     name: Checkout repositories
     runs-on: windows-latest
     outputs:
-      # Pass the temporary directory to downstream jobs
       temp-dir: ${{ steps.temp-dir.outputs.path }}
     steps:
       - name: Checkout this repository
         uses: actions/checkout@v4
 
-      - name: Checkout minioclient source (for reference)
+      - name: Checkout minioclient source (just for reference)
         uses: actions/checkout@v4
         with:
           repository: cboettig/minioclient
           path: minioclient-src
           fetch-depth: 1
 
-      - name: Create a shared temp directory
+      - name: Create a shared temporary directory
         id: temp-dir
         run: |
           $tmp = Join-Path $env:TEMP ("minioclient_debug_" + [guid]::NewGuid())
@@ -48,49 +41,20 @@ jobs:
           echo "path=$tmp" >> $env:GITHUB_OUTPUT
 
   # ==============================================================
-  # 2️⃣ Setup R – pick a stable version and install `remotes`
+  # 2️⃣ Install system‑level dependencies (OpenSSL, pkg‑config, CMake, compiler)
   # ==============================================================
-
-  setup-r:
-    name: Install R and remotes
-    needs: checkout
-    runs-on: windows-latest
-    env:
-      TEMP_DIR: ${{ needs.checkout.outputs.temp-dir }}
-    steps:
-      - name: Install R (v4.4) – official binary from r-lib
-        uses: r-lib/actions/setup-r@v2
-        with:
-          r-version: '4.4'               # change if you need another version
-          use-public-rspm: true           # faster binary packages
-
-      - name: Install R package `remotes`
-        run: |
-          install.packages('remotes', repos='https://cloud.r-project.org')
-        shell: Rscript {0}
-
-      - name: Record R version & library paths
-        run: |
-          Rscript -e "cat('R version:', getRversion(), '\n')"
-          Rscript -e "cat('R lib dir:', .libPaths()[1], '\n')"
-        shell: pwsh
-
-  # ==============================================================
-  # 3️⃣ Install system‑level dependencies
-  # ==============================================================
-
   install-system-deps:
-    name: Install native libraries (OpenSSL, pkg‑config, cmake, compilers)
+    name: Install native libraries & compiler
     needs: checkout
     runs-on: windows-latest
     env:
       TEMP_DIR: ${{ needs.checkout.outputs.temp-dir }}
     steps:
-      - name: Install Chocolatey (if not present)
+      - name: Install Chocolatey (bootstrap if missing)
         run: |
-          Set-ExecutionPolicy Bypass -Scope Process -Force;
+          Set-ExecutionPolicy Bypass -Scope Process -Force
           if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
-            iex ((New-Object System.Net.WebClient).DownloadString('https://chocolatey.org/install.ps1'))
+            iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
           }
         shell: pwsh
 
@@ -99,12 +63,36 @@ jobs:
           choco install -y openssl.light pkgconfiglite cmake mingw
         shell: pwsh
 
-      - name: Add MinGW to PATH (so gcc/g++ are found)
+      # ----------------------------------------------------------
+      # 2️⃣1️⃣ Add the MinGW bin folder to PATH (known Chocolatey location)
+      # ----------------------------------------------------------
+      - name: Add MinGW to PATH (fallback to VS Build Tools if missing)
+        id: mingw-path
         run: |
-          $mingw = (Get-ChildItem "$env:ProgramData\chocolatey\lib\mingw\tools\install\mingw64\bin")[0].FullName
-          echo "$mingw" >> $env:GITHUB_PATH
+          $mingwBin = "C:\ProgramData\chocolatey\lib\mingw\tools\install\mingw64\bin"
+          if (Test-Path $mingwBin) {
+            Write-Host "✅ MinGW found at $mingwBin – adding to PATH"
+            echo "$mingwBin" >> $env:GITHUB_PATH
+          } else {
+            Write-Warning "⚠️ MinGW folder not found. Falling back to Visual Studio Build Tools."
+            # Install VS Build Tools (lightweight) and add its VC/bin to PATH
+            choco install -y visualstudio2022buildtools --package-parameters "--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --passive --norestart"
+            $vsPath = (Get-ChildItem "C:\Program Files\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC" |
+                       Sort-Object LastWriteTime -Descending |
+                       Select-Object -First 1).FullName
+            $vcBin = Join-Path $vsPath "bin\Hostx64\x64"
+            if (Test-Path $vcBin) {
+              Write-Host "✅ VS C++ tools found at $vcBin – adding to PATH"
+              echo "$vcBin" >> $env:GITHUB_PATH
+            } else {
+              Write-Error "❌ Neither MinGW nor VS C++ tools could be located – compilation will likely fail."
+            }
+          }
         shell: pwsh
 
+      # ----------------------------------------------------------
+      # 2️⃣2️⃣ Verify that the tools are reachable
+      # ----------------------------------------------------------
       - name: Verify system tools
         run: |
           gcc --version
@@ -113,14 +101,22 @@ jobs:
           openssl version
         shell: pwsh
 
-      # Save a small diagnostics file for later inspection
-      - name: Dump pkg‑config search path
+      # ----------------------------------------------------------
+      # 2️⃣3️⃣ Export PKG_CONFIG_PATH so that OpenSSL’s .pc file is found
+      # ----------------------------------------------------------
+      - name: Set PKG_CONFIG_PATH for OpenSSL
         run: |
-          pkg-config --variable pc_path pkg-config > "${env:TEMP}\pkgconfig_path.log"
+          $opensslPc = "C:\ProgramData\chocolatey\lib\openssl.light\tools\openssl\share\pkgconfig"
+          if (Test-Path $opensslPc) {
+            $env:PKG_CONFIG_PATH = "$opensslPc;$env:PKG_CONFIG_PATH"
+            Write-Host "✅ PKG_CONFIG_PATH set to $opensslPc"
+          } else {
+            Write-Warning "⚠️ OpenSSL pkg‑config directory not found – some packages may not locate OpenSSL."
+          }
         shell: pwsh
 
   # ==============================================================
-  # 4️⃣ OS‑level diagnostics (helps spot missing headers, wrong arch, etc.)
+  # 3️⃣ OS‑level diagnostics (helps spot missing headers, wrong arch, etc.)
   # ==============================================================
 
   diagnostics-os:
@@ -130,21 +126,49 @@ jobs:
     env:
       TEMP_DIR: ${{ needs.checkout.outputs.temp-dir }}
     steps:
-      - name: System information
+      - name: System information (shortened)
         run: |
           systeminfo | Select-Object -First 20
         shell: pwsh
 
-      - name: Environment variables (relevant ones)
+      - name: Important environment variables
         run: |
           Get-ChildItem Env: | Where-Object {
-            $_.Name -match '^(PATH|INCLUDE|LIB|PKG_CONFIG_PATH|OPENSSL_ROOT_DIR)$'
+            $_.Name -match '^(PATH|INCLUDE|LIB|PKG_CONFIG_PATH|OPENSSL_ROOT_DIR|VSINSTALLDIR)$'
           } | Format-Table -AutoSize
         shell: pwsh
 
-      - name: List all files under the temporary directory (debug aid)
+      - name: List files under the temporary directory (debug aid)
         run: |
           Get-ChildItem -Recurse -Force $env:TEMP | Out-String
+        shell: pwsh
+
+  # ==============================================================
+  # 4️⃣ Install R and the `remotes` helper package
+  # ==============================================================
+
+  setup-r:
+    name: Install R (v4.4) and remotes
+    needs: checkout
+    runs-on: windows-latest
+    env:
+      TEMP_DIR: ${{ needs.checkout.outputs.temp-dir }}
+    steps:
+      - name: Install R (official binary from r‑lib)
+        uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: '4.4'
+          use-public-rspm: true
+
+      - name: Install R package `remotes`
+        run: |
+          install.packages('remotes', repos='https://cloud.r-project.org')
+        shell: Rscript {0}
+
+      - name: Record R version & library path (for debugging)
+        run: |
+          Rscript -e "cat('R version:', getRversion(), '\n')"
+          Rscript -e "cat('R lib dir:', .libPaths()[1], '\n')"
         shell: pwsh
 
   # ==============================================================
@@ -157,10 +181,9 @@ jobs:
     runs-on: windows-latest
     env:
       TEMP_DIR: ${{ needs.checkout.outputs.temp-dir }}
-      # Export the GITHUB_PAT so that remotes can use it for private repos (if needed)
-      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}   # needed for private repos (if any)
     steps:
-      - name: Checkout this repository (again – needed for R to see the .Rprofile etc.)
+      - name: Checkout this repository (again – needed for R session)
         uses: actions/checkout@v4
 
       - name: Install R (same version as earlier)
@@ -169,7 +192,7 @@ jobs:
           r-version: '4.4'
           use-public-rspm: true
 
-      - name: Install remotes (again – ensures it’s in the session)
+      - name: Install remotes (again – ensures it’s loaded)
         run: |
           install.packages('remotes', repos='https://cloud.r-project.org')
         shell: Rscript {0}
@@ -181,12 +204,12 @@ jobs:
         run: |
           # The leading & executes the script block; *> captures everything.
           & {
-            # Show the environment that R will see (helps debug missing vars)
+            # Show the environment that R will see – useful for debugging missing vars
             cat('--- ENV BEFORE INSTALL ---\n')
             print(Sys.getenv())
             cat('\n--- START minioclient install ---\n')
 
-            # Actual install command – keep `quiet=FALSE` so we get verbose output
+            # Actual install command – keep quiet=FALSE for verbose output
             remotes::install_github(
               "cboettig/minioclient",
               ref = "main",
@@ -198,7 +221,7 @@ jobs:
             cat('\n--- END minioclient install ---\n')
           } *> $env:LOG_FILE
 
-      - name: Upload the raw install log as an artifact
+      - name: Upload the raw install log (and auxiliary logs) as an artifact
         uses: actions/upload-artifact@v4
         with:
           name: minioclient-debug-logs
@@ -207,16 +230,16 @@ jobs:
             ${{ env.TEMP_DIR }}/pkgconfig_path.log
 
   # ==============================================================
-  # 6️⃣ Optional post‑cleanup (keeps artifact size modest)
+  # 6️⃣ Optional cleanup (keeps the runner tidy)
   # ==============================================================
 
   post-cleanup:
-    name: Trim large intermediate files (optional)
+    name: Delete temporary folder (optional)
     needs: install-minioclient
     runs-on: windows-latest
     if: always()
     steps:
-      - name: Delete the temporary folder (keeps runner tidy)
+      - name: Remove the shared temp directory
         run: |
           Remove-Item -Recurse -Force ${{ needs.checkout.outputs.temp-dir }}
         shell: pwsh
