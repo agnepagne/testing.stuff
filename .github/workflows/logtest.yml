@@ -38,9 +38,9 @@ jobs:
         env:
           DEMO_LOG: ${{ steps.prep_log.outputs.log_path }}   # <-- exact path
         run: |
-          # The `{ … }` block groups the commands.
-          # `*> $DEMO_LOG` writes **all** streams (stdout, stderr, warnings, verbose, etc.) to the file.
-          {
+          # The leading '&' **executes** the script block.
+          # `*> $DEMO_LOG` captures **all** streams (stdout, stderr, warnings, verbose, etc.).
+          & {
             # Use Write-Output (or plain strings) – Write-Host is NOT captured by redirection.
             Write-Output "=== Demo run started at $(Get-Date) ==="
             Write-Output ""
@@ -58,7 +58,7 @@ jobs:
             Write-Output ""
 
             Write-Output "🔹 Running a tiny R script (prints from R):"
-            # R may not be installed on the runner yet; the error (if any) will still be captured.
+            # Even if R isn’t installed, the error (or success) will be captured.
             Rscript -e 'cat("Hello from R!\n")'
             Write-Output ""
 
