@@ -1,6 +1,6 @@
 name: Log‑Demo (Windows)
 
-# Manual trigger – you can change this to `push` or `schedule` if you prefer
+# Trigger manually – you can change to `push` or `schedule` if you prefer
 on:
   workflow_dispatch:
 
@@ -18,7 +18,7 @@ jobs:
       # 2️⃣ Prepare a *real* temporary log file (empty file guarantees existence)
       # ---------------------------------------------------------
       - name: Prepare temporary log file
-        id: prep-log
+        id: prep-log                         # <-- this ID is used later
         run: |
           # Build a unique filename in the runner's Temp folder
           $logPath = Join-Path $env:TEMP ("log_demo_" + [guid]::NewGuid().ToString() + ".txt")
@@ -29,14 +29,14 @@ jobs:
           echo "DEMO_LOG=$logPath" >> $GITHUB_ENV
 
       # ---------------------------------------------------------
-      # 3️⃣ Run a handful of commands and capture **all** output via PowerShell redirection
+      # 3️⃣ Run demo commands (everything captured to the log file)
       # ---------------------------------------------------------
       - name: Run demo commands (output captured to log)
         env:
-          DEMO_LOG: ${{ steps.prep-log.outputs.log_path }}
+          DEMO_LOG: ${{ steps.prep-log.outputs.log_path }}   # <-- exact path
         run: |
           # The `{ … }` block groups the commands.
-          # `*> $DEMO_LOG` writes **all** streams (stdout, stderr, warning, verbose, etc.) to the file.
+          # `*> $DEMO_LOG` writes **all** streams (stdout, stderr, warnings, etc.) to the file.
           {
             Write-Host "=== Demo run started at $(Get-Date) ==="
             Write-Host ""
@@ -64,6 +64,7 @@ jobs:
       # 4️⃣ Show the log file (will always exist now)
       # ---------------------------------------------------------
       - name: Display demo log
+        # NOTE: we **must** use the same output reference here
         run: |
           Write-Host "`n===== Demo log (START) ====="
           Get-Content -Path ${{ steps.prep-log.outputs.log_path }}
