@@ -1,0 +1,69 @@
+name: Log‑Demo (Windows)
+
+# Manual trigger only – you can also change to `push` or `schedule` if you wish
+on:
+  workflow_dispatch:
+
+jobs:
+  demo-log-handling:
+    runs-on: windows-latest
+    steps:
+      # ---------------------------------------------------------
+      # 1️⃣ Checkout (optional – keeps the workspace tidy)
+      # ---------------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ---------------------------------------------------------
+      # 2️⃣ Prepare a *real* temporary log file (empty file guarantees existence)
+      # ---------------------------------------------------------
+      - name: Prepare temporary log file
+        id: prep-log
+        run: |
+          # Build a unique filename in the runner's Temp folder
+          $logPath = Join-Path $env:TEMP ("log_demo_" + [guid]::NewGuid().ToString() + ".txt")
+          # Force creation of an empty file so the path definitely exists
+          New-Item -Path $logPath -ItemType File -Force | Out-Null
+          # Export the path for later steps (both as an output and as an env var)
+          echo "log_path=$logPath" >> $GITHUB_OUTPUT
+          echo "DEMO_LOG=$logPath" >> $GITHUB_ENV
+
+      # ---------------------------------------------------------
+      # 3️⃣ Run a handful of commands and capture **all** output via PowerShell redirection
+      # ---------------------------------------------------------
+      - name: Run demo commands (output captured to log)
+        env:
+          DEMO_LOG: ${{ steps.prep-log.outputs.log_path }}
+        run: |
+          # The `*>` operator writes **all** streams (stdout + stderr) to the file.
+          # Everything inside the block will end up in the log file, even if a command fails.
+          (
+            echo "=== Demo run started at $(Get-Date) ==="
+            echo ""
+            echo "🔹 Greeting from PowerShell:"
+            Write-Host "Hello from PowerShell!"
+
+            echo ""
+            echo "🔹 OS information (via `systeminfo`):"
+            systeminfo | Select-Object -First 5
+
+            echo ""
+            echo "🔹 List of files in the temporary folder:"
+            Get-ChildItem -Path $env:TEMP | Format-Table Name, Length, LastWriteTime
+
+            echo ""
+            echo "🔹 Running a tiny R script (prints from R):"
+            Rscript -e 'cat("Hello from R!\n")'
+
+            echo ""
+            echo "=== Demo run finished ==="
+          ) *> $DEMO_LOG
+
+      # ---------------------------------------------------------
+      # 4️⃣ Show the log file (will always exist now)
+      # ---------------------------------------------------------
+      - name: Display demo log
+        run: |
+          Write-Host "`n===== Demo log (START) ====="
+          Get-Content -Path ${{ steps.prep-log.outputs.log_path }}
+          Write-Host "===== Demo log (END) =====`n"
