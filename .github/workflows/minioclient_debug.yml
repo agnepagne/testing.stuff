@@ -1,13 +1,13 @@
 name: Minioclient Debug Build (Windows – resilient toolchain)
 
 # ----------------------------------------------------------------------
-# Trigger – keep it manual while you investigate.
+# Manual trigger – useful while we are debugging.
 # ----------------------------------------------------------------------
 on:
   workflow_dispatch: {}
 
 # ----------------------------------------------------------------------
-# Global defaults – use PowerShell on Windows.
+# Use PowerShell for every step on Windows.
 # ----------------------------------------------------------------------
 defaults:
   run:
@@ -42,7 +42,7 @@ jobs:
 
   # ==============================================================
   # 2️⃣ Install system‑level dependencies (OpenSSL, pkg‑config, CMake, compiler)
-  # ============================================================== 
+  # ==============================================================
   install-system-deps:
     name: Install native libraries & compiler
     needs: checkout
@@ -265,19 +265,26 @@ jobs:
       - name: Create R script that installs minioclient and prints env
         run: |
           $rScript = @"
-          cat('--- ENV BEFORE INSTALL ---\n')
-          print(Sys.getenv())
-          cat('\n--- START minioclient install ---\n')
-          remotes::install_github(
-            repo = 'cboettig/minioclient',
-            ref  = 'main',
-            upgrade = 'never',
-            dependencies = FALSE,
-            quiet = FALSE
-          )
+# ------------------------------------------------------------
+# Print the R environment (helps debugging)
+# ------------------------------------------------------------
+cat('--- ENV BEFORE INSTALL ---\n')
+print(Sys.getenv())
+cat('\n--- START minioclient install ---\n')
 
-          cat('\n--- END minioclient install ---\n')
-          "@
+# ------------------------------------------------------------
+# Install the package from GitHub
+# ------------------------------------------------------------
+remotes::install_github(
+  repo = 'cboettig/minioclient',
+  ref  = 'main',
+  upgrade = 'never',
+  dependencies = FALSE,
+  quiet = FALSE
+)
+
+cat('\n--- END minioclient install ---\n')
+"@
 
           $scriptPath = Join-Path $env:TEMP 'install_minioclient.R'
           Set-Content -Path $scriptPath -Value $rScript -Encoding UTF8
