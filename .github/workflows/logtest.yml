@@ -28,9 +28,6 @@ jobs:
           # Export the path for later steps:
           #   - As an *output* (used with ${{ steps.prep_log.outputs.log_path }})
           #   - As an *environment variable* (available as $DEMO_LOG)
-          #
-          # IMPORTANT: $env:GITHUB_OUTPUT / $env:GITHUB_ENV are **environment variables**
-          #            – they must be referenced via $env: in PowerShell.
           echo "log_path=$logPath" >> $env:GITHUB_OUTPUT
           echo "DEMO_LOG=$logPath" >> $env:GITHUB_ENV
 
@@ -44,26 +41,28 @@ jobs:
           # The `{ … }` block groups the commands.
           # `*> $DEMO_LOG` writes **all** streams (stdout, stderr, warnings, verbose, etc.) to the file.
           {
-            Write-Host "=== Demo run started at $(Get-Date) ==="
-            Write-Host ""
+            # Use Write-Output (or plain strings) – Write-Host is NOT captured by redirection.
+            Write-Output "=== Demo run started at $(Get-Date) ==="
+            Write-Output ""
 
-            Write-Host "🔹 Greeting from PowerShell:"
-            Write-Host "Hello from PowerShell!"
-            Write-Host ""
+            Write-Output "🔹 Greeting from PowerShell:"
+            Write-Output "Hello from PowerShell!"
+            Write-Output ""
 
-            Write-Host "🔹 OS information (first 5 lines of `systeminfo`):"
+            Write-Output "🔹 OS information (first 5 lines of `systeminfo`):"
             systeminfo | Select-Object -First 5 | Out-String
-            Write-Host ""
+            Write-Output ""
 
-            Write-Host "🔹 List of files in the temporary folder:"
+            Write-Output "🔹 List of files in the temporary folder:"
             Get-ChildItem -Path $env:TEMP | Format-Table Name, Length, LastWriteTime | Out-String
-            Write-Host ""
+            Write-Output ""
 
-            Write-Host "🔹 Running a tiny R script (prints from R):"
+            Write-Output "🔹 Running a tiny R script (prints from R):"
+            # R may not be installed on the runner yet; the error (if any) will still be captured.
             Rscript -e 'cat("Hello from R!\n")'
-            Write-Host ""
+            Write-Output ""
 
-            Write-Host "=== Demo run finished ==="
+            Write-Output "=== Demo run finished ==="
           } *> $DEMO_LOG
 
       # ---------------------------------------------------------
