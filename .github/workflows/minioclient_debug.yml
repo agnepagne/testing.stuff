@@ -265,26 +265,19 @@ jobs:
       - name: Create R script that installs minioclient and prints env
         run: |
           $rScript = @"
-# ------------------------------------------------------------
-# Print the R environment (helps debugging)
-# ------------------------------------------------------------
-cat('--- ENV BEFORE INSTALL ---\n')
-print(Sys.getenv())
-cat('\n--- START minioclient install ---\n')
+          cat('--- ENV BEFORE INSTALL ---\n')
+          print(Sys.getenv())
+          cat('\n--- START minioclient install ---\n')
+          remotes::install_github(
+            repo = 'cboettig/minioclient',
+            ref  = 'main',
+            upgrade = 'never',
+            dependencies = FALSE,
+            quiet = FALSE
+          )
 
-# ------------------------------------------------------------
-# Install the package from GitHub
-# ------------------------------------------------------------
-remotes::install_github(
-  repo = 'cboettig/minioclient',
-  ref  = 'main',
-  upgrade = 'never',
-  dependencies = FALSE,
-  quiet = FALSE
-)
-
-cat('\n--- END minioclient install ---\n')
-"@
+          cat('\n--- END minioclient install ---\n')
+          "@
 
           $scriptPath = Join-Path $env:TEMP 'install_minioclient.R'
           Set-Content -Path $scriptPath -Value $rScript -Encoding UTF8
