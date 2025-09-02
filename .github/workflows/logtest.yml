@@ -1,6 +1,6 @@
 name: Log‑Demo (Windows)
 
-# Manual trigger only – you can also change to `push` or `schedule` if you wish
+# Manual trigger – you can change this to `push` or `schedule` if you prefer
 on:
   workflow_dispatch:
 
@@ -35,29 +35,30 @@ jobs:
         env:
           DEMO_LOG: ${{ steps.prep-log.outputs.log_path }}
         run: |
-          # The `*>` operator writes **all** streams (stdout + stderr) to the file.
-          # Everything inside the block will end up in the log file, even if a command fails.
-          (
-            echo "=== Demo run started at $(Get-Date) ==="
-            echo ""
-            echo "🔹 Greeting from PowerShell:"
+          # The `{ … }` block groups the commands.
+          # `*> $DEMO_LOG` writes **all** streams (stdout, stderr, warning, verbose, etc.) to the file.
+          {
+            Write-Host "=== Demo run started at $(Get-Date) ==="
+            Write-Host ""
+
+            Write-Host "🔹 Greeting from PowerShell:"
             Write-Host "Hello from PowerShell!"
+            Write-Host ""
 
-            echo ""
-            echo "🔹 OS information (via `systeminfo`):"
-            systeminfo | Select-Object -First 5
+            Write-Host "🔹 OS information (first 5 lines of `systeminfo`):"
+            systeminfo | Select-Object -First 5 | Out-String
+            Write-Host ""
 
-            echo ""
-            echo "🔹 List of files in the temporary folder:"
-            Get-ChildItem -Path $env:TEMP | Format-Table Name, Length, LastWriteTime
+            Write-Host "🔹 List of files in the temporary folder:"
+            Get-ChildItem -Path $env:TEMP | Format-Table Name, Length, LastWriteTime | Out-String
+            Write-Host ""
 
-            echo ""
-            echo "🔹 Running a tiny R script (prints from R):"
+            Write-Host "🔹 Running a tiny R script (prints from R):"
             Rscript -e 'cat("Hello from R!\n")'
+            Write-Host ""
 
-            echo ""
-            echo "=== Demo run finished ==="
-          ) *> $DEMO_LOG
+            Write-Host "=== Demo run finished ==="
+          } *> $DEMO_LOG
 
       # ---------------------------------------------------------
       # 4️⃣ Show the log file (will always exist now)
