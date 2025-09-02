@@ -1,6 +1,6 @@
 name: Log‑Demo (Windows)
 
-# Trigger manually – you can change to `push` or `schedule` if you prefer
+# Manual trigger – you can change to `push` or `schedule` if you prefer
 on:
   workflow_dispatch:
 
@@ -18,7 +18,7 @@ jobs:
       # 2️⃣ Prepare a *real* temporary log file (empty file guarantees existence)
       # ---------------------------------------------------------
       - name: Prepare temporary log file
-        id: prep-log                         # <-- this ID is used later
+        id: prep_log                               # <-- underscore instead of dash
         run: |
           # Build a unique filename in the runner's Temp folder
           $logPath = Join-Path $env:TEMP ("log_demo_" + [guid]::NewGuid().ToString() + ".txt")
@@ -33,7 +33,7 @@ jobs:
       # ---------------------------------------------------------
       - name: Run demo commands (output captured to log)
         env:
-          DEMO_LOG: ${{ steps.prep-log.outputs.log_path }}   # <-- exact path
+          DEMO_LOG: ${{ steps.prep_log.outputs.log_path }}   # <-- exact path
         run: |
           # The `{ … }` block groups the commands.
           # `*> $DEMO_LOG` writes **all** streams (stdout, stderr, warnings, etc.) to the file.
@@ -67,5 +67,5 @@ jobs:
         # NOTE: we **must** use the same output reference here
         run: |
           Write-Host "`n===== Demo log (START) ====="
-          Get-Content -Path ${{ steps.prep-log.outputs.log_path }}
+          Get-Content -Path ${{ steps.prep_log.outputs.log_path }}
           Write-Host "===== Demo log (END) =====`n"
