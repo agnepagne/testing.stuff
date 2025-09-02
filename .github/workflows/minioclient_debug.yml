@@ -1,0 +1,222 @@
+name: Minioclient Debug Build
+
+# ----------------------------------------------------------------------
+# Trigger options – you can keep it manual while you investigate.
+# ----------------------------------------------------------------------
+on:
+  workflow_dispatch:                     # manual button in the UI
+  # Uncomment one of the following if you want automatic runs:
+  # push:
+  #   branches: [ main ]
+  # pull_request:
+  #   branches: [ main ]
+
+# ----------------------------------------------------------------------
+# Global defaults – make the logs easier to read.
+# ----------------------------------------------------------------------
+defaults:
+  run:
+    shell: pwsh                     # PowerShell is the default on windows‑latest
+
+jobs:
+  # ==============================================================
+  # 1️⃣ Checkout – get both the repo you’re testing and the target repo
+  # ==============================================================
+
+  checkout:
+    name: Checkout repositories
+    runs-on: windows-latest
+    outputs:
+      # Pass the temporary directory to downstream jobs
+      temp-dir: ${{ steps.temp-dir.outputs.path }}
+    steps:
+      - name: Checkout this repository
+        uses: actions/checkout@v4
+
+      - name: Checkout minioclient source (for reference)
+        uses: actions/checkout@v4
+        with:
+          repository: cboettig/minioclient
+          path: minioclient-src
+          fetch-depth: 1
+
+      - name: Create a shared temp directory
+        id: temp-dir
+        run: |
+          $tmp = Join-Path $env:TEMP ("minioclient_debug_" + [guid]::NewGuid())
+          New-Item -ItemType Directory -Path $tmp | Out-Null
+          echo "path=$tmp" >> $env:GITHUB_OUTPUT
+
+  # ==============================================================
+  # 2️⃣ Setup R – pick a stable version and install `remotes`
+  # ==============================================================
+
+  setup-r:
+    name: Install R and remotes
+    needs: checkout
+    runs-on: windows-latest
+    env:
+      TEMP_DIR: ${{ needs.checkout.outputs.temp-dir }}
+    steps:
+      - name: Install R (v4.4) – official binary from r-lib
+        uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: '4.4'               # change if you need another version
+          use-public-rspm: true           # faster binary packages
+
+      - name: Install R package `remotes`
+        run: |
+          install.packages('remotes', repos='https://cloud.r-project.org')
+        shell: Rscript {0}
+
+      - name: Record R version & library paths
+        run: |
+          Rscript -e "cat('R version:', getRversion(), '\n')"
+          Rscript -e "cat('R lib dir:', .libPaths()[1], '\n')"
+        shell: pwsh
+
+  # ==============================================================
+  # 3️⃣ Install system‑level dependencies
+  # ==============================================================
+
+  install-system-deps:
+    name: Install native libraries (OpenSSL, pkg‑config, cmake, compilers)
+    needs: checkout
+    runs-on: windows-latest
+    env:
+      TEMP_DIR: ${{ needs.checkout.outputs.temp-dir }}
+    steps:
+      - name: Install Chocolatey (if not present)
+        run: |
+          Set-ExecutionPolicy Bypass -Scope Process -Force;
+          if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
+            iex ((New-Object System.Net.WebClient).DownloadString('https://chocolatey.org/install.ps1'))
+          }
+        shell: pwsh
+
+      - name: Install required native packages
+        run: |
+          choco install -y openssl.light pkgconfiglite cmake mingw
+        shell: pwsh
+
+      - name: Add MinGW to PATH (so gcc/g++ are found)
+        run: |
+          $mingw = (Get-ChildItem "$env:ProgramData\chocolatey\lib\mingw\tools\install\mingw64\bin")[0].FullName
+          echo "$mingw" >> $env:GITHUB_PATH
+        shell: pwsh
+
+      - name: Verify system tools
+        run: |
+          gcc --version
+          pkg-config --version
+          cmake --version
+          openssl version
+        shell: pwsh
+
+      # Save a small diagnostics file for later inspection
+      - name: Dump pkg‑config search path
+        run: |
+          pkg-config --variable pc_path pkg-config > "${env:TEMP}\pkgconfig_path.log"
+        shell: pwsh
+
+  # ==============================================================
+  # 4️⃣ OS‑level diagnostics (helps spot missing headers, wrong arch, etc.)
+  # ==============================================================
+
+  diagnostics-os:
+    name: Gather OS & compiler diagnostics
+    needs: [checkout, install-system-deps]
+    runs-on: windows-latest
+    env:
+      TEMP_DIR: ${{ needs.checkout.outputs.temp-dir }}
+    steps:
+      - name: System information
+        run: |
+          systeminfo | Select-Object -First 20
+        shell: pwsh
+
+      - name: Environment variables (relevant ones)
+        run: |
+          Get-ChildItem Env: | Where-Object {
+            $_.Name -match '^(PATH|INCLUDE|LIB|PKG_CONFIG_PATH|OPENSSL_ROOT_DIR)$'
+          } | Format-Table -AutoSize
+        shell: pwsh
+
+      - name: List all files under the temporary directory (debug aid)
+        run: |
+          Get-ChildItem -Recurse -Force $env:TEMP | Out-String
+        shell: pwsh
+
+  # ==============================================================
+  # 5️⃣ Attempt to install minioclient – capture **all** output
+  # ==============================================================
+
+  install-minioclient:
+    name: Install minioclient (full log)
+    needs: [checkout, setup-r, install-system-deps, diagnostics-os]
+    runs-on: windows-latest
+    env:
+      TEMP_DIR: ${{ needs.checkout.outputs.temp-dir }}
+      # Export the GITHUB_PAT so that remotes can use it for private repos (if needed)
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout this repository (again – needed for R to see the .Rprofile etc.)
+        uses: actions/checkout@v4
+
+      - name: Install R (same version as earlier)
+        uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: '4.4'
+          use-public-rspm: true
+
+      - name: Install remotes (again – ensures it’s in the session)
+        run: |
+          install.packages('remotes', repos='https://cloud.r-project.org')
+        shell: Rscript {0}
+
+      - name: Run minioclient installation and capture **all** streams
+        id: install
+        env:
+          LOG_FILE: "${{ env.TEMP_DIR }}\\minioclient_install.log"
+        run: |
+          # The leading & executes the script block; *> captures everything.
+          & {
+            # Show the environment that R will see (helps debug missing vars)
+            cat('--- ENV BEFORE INSTALL ---\n')
+            print(Sys.getenv())
+            cat('\n--- START minioclient install ---\n')
+
+            # Actual install command – keep `quiet=FALSE` so we get verbose output
+            remotes::install_github(
+              "cboettig/minioclient",
+              ref = "main",
+              upgrade = "never",
+              dependencies = FALSE,
+              quiet = FALSE
+            )
+
+            cat('\n--- END minioclient install ---\n')
+          } *> $env:LOG_FILE
+
+      - name: Upload the raw install log as an artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: minioclient-debug-logs
+          path: |
+            ${{ env.TEMP_DIR }}/*.log
+            ${{ env.TEMP_DIR }}/pkgconfig_path.log
+
+  # ==============================================================
+  # 6️⃣ Optional post‑cleanup (keeps artifact size modest)
+  # ==============================================================
+
+  post-cleanup:
+    name: Trim large intermediate files (optional)
+    needs: install-minioclient
+    runs-on: windows-latest
+    if: always()
+    steps:
+      - name: Delete the temporary folder (keeps runner tidy)
+        run: |
+          Remove-Item -Recurse -Force ${{ needs.checkout.outputs.temp-dir }}
+        shell: pwsh
