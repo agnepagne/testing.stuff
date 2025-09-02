@@ -44,136 +44,136 @@ jobs:
   # 2️⃣ Install system‑level dependencies (OpenSSL, pkg‑config, CMake, compiler)
   # ==============================================================
   install-system-deps:
-  name: Install native libraries & compiler
-  needs: checkout
-  runs-on: windows-latest
-  env:
-    TEMP_DIR: ${{ needs.checkout.outputs.temp-dir }}
-  steps:
-    # ------------------------------------------------------------------
-    # 1️⃣ Bootstrap Chocolatey (if the runner somehow lacks it)
-    # ------------------------------------------------------------------
-    - name: Install Chocolatey (bootstrap if missing)
-      run: |
-        Set-ExecutionPolicy Bypass -Scope Process -Force
-        if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
-          iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
-        }
-      shell: pwsh
-
-    # ------------------------------------------------------------------
-    # 2️⃣ Install the native packages we know we’ll need
-    # ------------------------------------------------------------------
-    - name: Install native packages (OpenSSL, pkg‑config, CMake, MinGW, VS Build Tools)
-      run: |
-        choco install -y openssl.light
-        choco install -y pkgconfiglite
-        choco install -y cmake
-        choco install -y mingw
-        choco install -y visualstudio2022buildtools `
-          --package-parameters "--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --passive --norestart"
-      shell: pwsh
-
-    # ------------------------------------------------------------------
-    # 3️⃣ Add MinGW to PATH (if it exists)
-    # ------------------------------------------------------------------
-    - name: Add MinGW bin to PATH (if present)
-      run: |
-        $mingwBin = "C:\ProgramData\chocolatey\lib\mingw\tools\install\mingw64\bin"
-        if (Test-Path $mingwBin) {
-          Write-Host "✅ Adding MinGW ($mingwBin) to PATH"
-          echo $mingwBin >> $env:GITHUB_PATH
-        } else {
-          Write-Warning "⚠️ MinGW bin folder not found – will try VS Build Tools next."
-        }
-      shell: pwsh
-
-    # ------------------------------------------------------------------
-    # 4️⃣ If MinGW wasn’t added, locate VS Build Tools and initialise MSVC
-    # ------------------------------------------------------------------
-    - name: Locate VS Build Tools, initialise MSVC, and add to PATH
-      run: |
-        # Find vswhere.exe (installed with the VS package)
-        $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-        if (-not (Test-Path $vswhere)) {
-          Write-Error "❌ vswhere.exe not found – cannot locate VS Build Tools"
-          exit 1
-        }
-
-        # Get the latest VS2022 BuildTools installation that includes the C++ workload
-        $vsInstall = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-        if (-not $vsInstall) {
-          Write-Warning "⚠️ No VS Build Tools with VC component detected – skipping VS path setup."
-          exit 0   # Not fatal – MinGW may still work
-        }
-
-        Write-Host "✅ VS Build Tools found at $vsInstall"
-
-        # The MSVC root is under <install>\VC\Tools\MSVC
-        $msvcRoot = Join-Path $vsInstall "VC\Tools\MSVC"
-        if (-not (Test-Path $msvcRoot)) {
-          Write-Warning "⚠️ $msvcRoot does not exist yet – forcing a first‑time init."
-          $vcvars = Join-Path $vsInstall "Common7\Tools\VsDevCmd.bat"
-          if (Test-Path $vcvars) {
-            cmd /c "`"$vcvars`" && echo Init done"
-          } else {
-            Write-Error "❌ Could not find VsDevCmd.bat – cannot initialise MSVC."
+    name: Install native libraries & compiler
+    needs: checkout
+    runs-on: windows-latest
+    env:
+      TEMP_DIR: ${{ needs.checkout.outputs.temp-dir }}
+    steps:
+      # ------------------------------------------------------------------
+      # 1️⃣ Bootstrap Chocolatey (if the runner somehow lacks it)
+      # ------------------------------------------------------------------
+      - name: Install Chocolatey (bootstrap if missing)
+        run: |
+          Set-ExecutionPolicy Bypass -Scope Process -Force
+          if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
+            iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
           }
-          Start-Sleep -Seconds 5
-        }
+        shell: pwsh
 
-        # Pick the newest version folder
-        $msvcVersion = Get-ChildItem $msvcRoot -Directory |
-                       Sort-Object Name -Descending |
-                       Select-Object -First 1
-        if (-not $msvcVersion) {
-          Write-Error "❌ No MSVC version folder found under $msvcRoot"
-          exit 1
-        }
+      # ------------------------------------------------------------------
+      # 2️⃣ Install the native packages we know we’ll need
+      # ------------------------------------------------------------------
+      - name: Install native packages (OpenSSL, pkg‑config, CMake, MinGW, VS Build Tools)
+        run: |
+          choco install -y openssl.light
+          choco install -y pkgconfiglite
+          choco install -y cmake
+          choco install -y mingw
+          choco install -y visualstudio2022buildtools `
+            --package-parameters "--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --passive --norestart"
+        shell: pwsh
 
-        $vcBin = Join-Path $msvcVersion.FullName "bin\Hostx64\x64"
-        if (Test-Path $vcBin) {
-          Write-Host "✅ Adding VS C++ bin ($vcBin) to PATH"
-          echo $vcBin >> $env:GITHUB_PATH
-        } else {
-          Write-Error "❌ Expected VC bin folder not found: $vcBin"
-        }
-      shell: pwsh
+      # ------------------------------------------------------------------
+      # 3️⃣ Add MinGW to PATH (if it exists)
+      # ------------------------------------------------------------------
+      - name: Add MinGW bin to PATH (if present)
+        run: |
+          $mingwBin = "C:\ProgramData\chocolatey\lib\mingw\tools\install\mingw64\bin"
+          if (Test-Path $mingwBin) {
+            Write-Host "✅ Adding MinGW ($mingwBin) to PATH"
+            echo $mingwBin >> $env:GITHUB_PATH
+          } else {
+            Write-Warning "⚠️ MinGW bin folder not found – will try VS Build Tools next."
+          }
+        shell: pwsh
 
-    # ------------------------------------------------------------------
-    # 5️⃣ Verify that a compiler is now reachable
-    # ------------------------------------------------------------------
-    - name: Verify compiler availability
-      run: |
-        Write-Host "`n=== Compiler version checks ==="
-        if (Get-Command gcc -ErrorAction SilentlyContinue) {
-          gcc --version
-        } elseif (Get-Command cl -ErrorAction SilentlyContinue) {
-          cl
-        } else {
-          Write-Error "❌ No C/C++ compiler found in PATH after the setup steps."
-        }
+      # ------------------------------------------------------------------
+      # 4️⃣ If MinGW wasn’t added, locate VS Build Tools and initialise MSVC
+      # ------------------------------------------------------------------
+      - name: Locate VS Build Tools, initialise MSVC, and add to PATH
+        run: |
+          # Find vswhere.exe (installed with the VS package)
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (-not (Test-Path $vswhere)) {
+            Write-Error "❌ vswhere.exe not found – cannot locate VS Build Tools"
+            exit 1
+          }
 
-        Write-Host "`n=== pkg-config check ==="
-        pkg-config --version || Write-Warning "pkg-config not found"
+          # Get the latest VS2022 BuildTools installation that includes the C++ workload
+          $vsInstall = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vsInstall) {
+            Write-Warning "⚠️ No VS Build Tools with VC component detected – skipping VS path setup."
+            exit 0   # Not fatal – MinGW may still work
+          }
 
-        Write-Host "`n=== OpenSSL version ==="
-        openssl version || Write-Warning "OpenSSL not found"
-      shell: pwsh
+          Write-Host "✅ VS Build Tools found at $vsInstall"
 
-    # ------------------------------------------------------------------
-    # 6️⃣ Export PKG_CONFIG_PATH so OpenSSL’s .pc file is visible
-    # ------------------------------------------------------------------
-    - name: Set PKG_CONFIG_PATH for OpenSSL
-      run: |
-        $opensslPc = "C:\ProgramData\chocolatey\lib\openssl.light\tools\openssl\share\pkgconfig"
-        if (Test-Path $opensslPc) {
-          $env:PKG_CONFIG_PATH = "$opensslPc;$env:PKG_CONFIG_PATH"
-          Write-Host "✅ PKG_CONFIG_PATH set to $opensslPc"
-        } else {
-          Write-Warning "⚠️ OpenSSL pkg‑config directory not found – some packages may not locate OpenSSL."
-        }
-      shell: pwsh
+          # The MSVC root is under <install>\VC\Tools\MSVC
+          $msvcRoot = Join-Path $vsInstall "VC\Tools\MSVC"
+          if (-not (Test-Path $msvcRoot)) {
+            Write-Warning "⚠️ $msvcRoot does not exist yet – forcing a first‑time init."
+            $vcvars = Join-Path $vsInstall "Common7\Tools\VsDevCmd.bat"
+            if (Test-Path $vcvars) {
+              cmd /c "`"$vcvars`" && echo Init done"
+            } else {
+              Write-Error "❌ Could not find VsDevCmd.bat – cannot initialise MSVC."
+            }
+            Start-Sleep -Seconds 5
+          }
+
+          # Pick the newest version folder
+          $msvcVersion = Get-ChildItem $msvcRoot -Directory |
+                         Sort-Object Name -Descending |
+                         Select-Object -First 1
+          if (-not $msvcVersion) {
+            Write-Error "❌ No MSVC version folder found under $msvcRoot"
+            exit 1
+          }
+
+          $vcBin = Join-Path $msvcVersion.FullName "bin\Hostx64\x64"
+          if (Test-Path $vcBin) {
+            Write-Host "✅ Adding VS C++ bin ($vcBin) to PATH"
+            echo $vcBin >> $env:GITHUB_PATH
+          } else {
+            Write-Error "❌ Expected VC bin folder not found: $vcBin"
+          }
+        shell: pwsh
+
+      # ------------------------------------------------------------------
+      # 5️⃣ Verify that a compiler is now reachable
+      # ------------------------------------------------------------------
+      - name: Verify compiler availability
+        run: |
+          Write-Host "`n=== Compiler version checks ==="
+          if (Get-Command gcc -ErrorAction SilentlyContinue) {
+            gcc --version
+          } elseif (Get-Command cl -ErrorAction SilentlyContinue) {
+            cl
+          } else {
+            Write-Error "❌ No C/C++ compiler found in PATH after the setup steps."
+          }
+
+          Write-Host "`n=== pkg-config check ==="
+          pkg-config --version || Write-Warning "pkg-config not found"
+
+          Write-Host "`n=== OpenSSL version ==="
+          openssl version || Write-Warning "OpenSSL not found"
+        shell: pwsh
+
+      # ------------------------------------------------------------------
+      # 6️⃣ Export PKG_CONFIG_PATH so OpenSSL’s .pc file is visible
+      # ------------------------------------------------------------------
+      - name: Set PKG_CONFIG_PATH for OpenSSL
+        run: |
+          $opensslPc = "C:\ProgramData\chocolatey\lib\openssl.light\tools\openssl\share\pkgconfig"
+          if (Test-Path $opensslPc) {
+            $env:PKG_CONFIG_PATH = "$opensslPc;$env:PKG_CONFIG_PATH"
+            Write-Host "✅ PKG_CONFIG_PATH set to $opensslPc"
+          } else {
+            Write-Warning "⚠️ OpenSSL pkg‑config directory not found – some packages may not locate OpenSSL."
+          }
+        shell: pwsh
 
   # ==============================================================
   # 3️⃣ OS‑level diagnostics (helps spot missing headers, wrong arch, etc.)
