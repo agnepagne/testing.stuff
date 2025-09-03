@@ -275,28 +275,35 @@ jobs:
           Write-Host "✅ R script written to $scriptPath"
           echo "R_SCRIPT=$scriptPath" >> $env:GITHUB_ENV
         shell: pwsh
-  
+
+      # --------------------------------------------------------------
+      # 5️⃣5️⃣ Execute the R script and capture **all** output (stdout+stderr)
+      # --------------------------------------------------------------
       - name: Run the R script and capture everything
+        # ① expose the checkout output as a step‑level env var
         env:
-          MINIOTMP: ${{ needs.checkout.outputs.temp-dir }}
-        continue-on-error: true          # <‑‑ prevents the step from failing the job
+          MINIOTMP: ${{ needs.checkout.outputs.temp-dir }}   # <-- the real folder
         run: |
+          # ② make sure the folder really exists (mkdir is safe if it already does)
           if (-not (Test-Path $env:MINIOTMP)) {
             New-Item -ItemType Directory -Path $env:MINIOTMP | Out-Null
           }
-  
+      
           $logFile = Join-Path $env:MINIOTMP 'minioclient_install.log'
+      
+          # ③ run R and redirect BOTH stdout AND stderr into the log file
           Rscript $env:R_SCRIPT *> $logFile
+      
           Write-Host "✅ Installation finished – log saved to $logFile"
         shell: pwsh
-  
-      - name: Upload install log as artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: minioclient-debug-logs
-          path: |
-            ${{ needs.checkout.outputs.temp-dir }}\minioclient_install.log
-            ${{ needs.checkout.outputs.temp-dir }}/*.log
+        
+            - name: Upload install log as artifact
+              uses: actions/upload-artifact@v4
+              with:
+                name: minioclient-debug-logs
+                path: |
+                  ${{ needs.checkout.outputs.temp-dir }}\minioclient_install.log
+                  ${{ needs.checkout.outputs.temp-dir }}/*.log
 
   # ==============================================================
   # 6️⃣ Optional cleanup (keeps the runner tidy)
