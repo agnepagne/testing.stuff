@@ -233,8 +233,8 @@ jobs:
     needs: [checkout, setup-r, install-system-deps, diagnostics-os]
     runs-on: windows-latest
     env:
+      # Resolve the temp directory *once* here; PowerShell can read it via $env:TEMP_DIR
       TEMP_DIR: ${{ needs.checkout.outputs.temp-dir }}
-      LOG_FILE: "${{ env.TEMP_DIR }}\\minioclient_install.log"
     steps:
       # --------------------------------------------------------------
       # 5️⃣1️⃣ Checkout the repository again (required for the R step)
@@ -297,8 +297,10 @@ jobs:
       # --------------------------------------------------------------
       - name: Run the R script and capture everything
         run: |
-          Rscript $env:R_SCRIPT *> $env:LOG_FILE
-          Write-Host "✅ Installation finished – log saved to $env:LOG_FILE"
+          # Build the full log‑file path using the env var we set above
+          $logFile = Join-Path $env:TEMP_DIR 'minioclient_install.log'
+          Rscript $env:R_SCRIPT *> $logFile
+          Write-Host "✅ Installation finished – log saved to $logFile"
         shell: pwsh
 
       # --------------------------------------------------------------
@@ -309,8 +311,8 @@ jobs:
         with:
           name: minioclient-debug-logs
           path: |
-            ${{ env.LOG_FILE }}
-            ${{ env.TEMP_DIR }}/*.log   # catches any other logs you may have created
+            ${{ env.TEMP_DIR }}\minioclient_install.log
+            ${{ needs.checkout.outputs.temp-dir }}/*.log   # catches any other logs you may have created
 
   # ==============================================================
   # 6️⃣ Optional cleanup (keeps the runner tidy)
