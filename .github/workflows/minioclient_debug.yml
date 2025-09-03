@@ -233,6 +233,76 @@ jobs:
     needs: [checkout, setup-r, install-system-deps, diagnostics-os]
     runs-on: windows-latest
     env:
+      TEMP_DIR: ${{ needs.checkout.outputs.temp-dir }}
+    steps:
+      - name: Checkout this repository (again – needed for R session)
+        uses: actions/checkout@v4
+  
+      - name: Install R (v4.4) – same version as earlier
+        uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: '4.4'
+          use-public-rspm: true
+  
+      - name: Install R package `remotes`
+        run: |
+          install.packages('remotes', repos='https://cloud.r-project.org')
+        shell: Rscript {0}
+  
+      - name: Create R script that installs minioclient and prints env
+        run: |
+          $rScript = @"
+          # ------------------------------------------------------------
+          # Print the R environment (helps debugging)
+          # ------------------------------------------------------------
+          cat('--- ENV BEFORE INSTALL ---\n')
+          print(Sys.getenv())
+          cat('\n--- START minioclient install ---\n')
+          
+          remotes::install_github(
+            repo = 'cboettig/minioclient',
+            ref  = 'main',
+            upgrade = 'never',
+            dependencies = FALSE,
+            quiet = FALSE
+          )
+          
+          cat('\n--- END minioclient install ---\n')
+          "@
+  
+          $scriptPath = Join-Path $env:TEMP 'install_minioclient.R'
+          Set-Content -Path $scriptPath -Value $rScript -Encoding UTF8
+          Write-Host "✅ R script written to $scriptPath"
+          echo "R_SCRIPT=$scriptPath" >> $env:GITHUB_ENV
+        shell: pwsh
+  
+      - name: Run the R script and capture everything
+        env:
+          MINIOTMP: ${{ needs.checkout.outputs.temp-dir }}
+        continue-on-error: true          # <‑‑ prevents the step from failing the job
+        run: |
+          if (-not (Test-Path $env:MINIOTMP)) {
+            New-Item -ItemType Directory -Path $env:MINIOTMP | Out-Null
+          }
+  
+          $logFile = Join-Path $env:MINIOTMP 'minioclient_install.log'
+          Rscript $env:R_SCRIPT *> $logFile
+          Write-Host "✅ Installation finished – log saved to $logFile"
+        shell: pwsh
+  
+      - name: Upload install log as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: minioclient-debug-logs
+          path: |
+            ${{ needs.checkout.outputs.temp-dir }}\minioclient_install.log
+            ${{ needs.checkout.outputs.temp-dir }}/*.log
+  
+  install-minioclient:
+    name: Install minioclient (full log)
+    needs: [checkout, setup-r, install-system-deps, diagnostics-os]
+    runs-on: windows-latest
+    env:
       # Resolve the temp directory *once* here; PowerShell can read it via $env:TEMP_DIR
       TEMP_DIR: ${{ needs.checkout.outputs.temp-dir }}
     steps:
@@ -325,11 +395,19 @@ jobs:
   # ==============================================================
   post-cleanup:
     name: Delete temporary folder (optional)
-    needs: install-minioclient
+    needs: [checkout, install-minioclient]
     runs-on: windows-latest
     if: always()
     steps:
       - name: Remove the shared temp directory
+        env:
+          CLEANUP_DIR: ${{ needs.checkout.outputs.temp-dir }}
         run: |
-          Remove-Item -Recurse -Force ${{ needs.checkout.outputs.temp-dir }}
+          if (-not (Test-Path $env:CLEANUP_DIR)) {
+            Write-Warning "🟡 Temp directory not found – it may have already been removed."
+            exit 0
+          }
+  
+          Write-Host "🗑️ Deleting temporary directory: $env:CLEANUP_DIR"
+          Remove-Item -Recurse -Force -LiteralPath $env:CLEANUP_DIR
         shell: pwsh
