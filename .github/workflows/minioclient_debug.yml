@@ -280,23 +280,27 @@ jobs:
       # 5️⃣5️⃣ Execute the R script and capture **all** output (stdout+stderr)
       # --------------------------------------------------------------
       - name: Run the R script and capture everything
-        # ① expose the checkout output as a step‑level env var
+        id: install_step                     # give the step an ID so later steps can read its output
         env:
-          MINIOTMP: ${{ needs.checkout.outputs.temp-dir }}   # <-- the real folder
+          MINIOTMP: ${{ needs.checkout.outputs.temp-dir }}
         run: |
-          # ② make sure the folder really exists (mkdir is safe if it already does)
           if (-not (Test-Path $env:MINIOTMP)) {
             New-Item -ItemType Directory -Path $env:MINIOTMP | Out-Null
           }
       
           $logFile = Join-Path $env:MINIOTMP 'minioclient_install.log'
       
-          # ③ run R and redirect BOTH stdout AND stderr into the log file
+          # Run Rscript – capture its exit code
           Rscript $env:R_SCRIPT *> $logFile
+          $rc = $LASTEXITCODE   # <-- exit status of Rscript
       
           Write-Host "✅ Installation finished – log saved to $logFile"
+          Write-Host "🔎 Rscript exit code: $rc"
+      
+          # Export the code as a step output (optional, for downstream jobs)
+          echo "install_rc=$rc" >> $GITHUB_OUTPUT
         shell: pwsh
-        
+            
       - name: Upload install log as artifact
         uses: actions/upload-artifact@v4
         with:
