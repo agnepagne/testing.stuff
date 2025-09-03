@@ -297,13 +297,13 @@ jobs:
           Write-Host "✅ Installation finished – log saved to $logFile"
         shell: pwsh
         
-            - name: Upload install log as artifact
-              uses: actions/upload-artifact@v4
-              with:
-                name: minioclient-debug-logs
-                path: |
-                  ${{ needs.checkout.outputs.temp-dir }}\minioclient_install.log
-                  ${{ needs.checkout.outputs.temp-dir }}/*.log
+      - name: Upload install log as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: minioclient-debug-logs
+          path: |
+            ${{ needs.checkout.outputs.temp-dir }}\minioclient_install.log
+            ${{ needs.checkout.outputs.temp-dir }}/*.log
 
   # ==============================================================
   # 6️⃣ Optional cleanup (keeps the runner tidy)
