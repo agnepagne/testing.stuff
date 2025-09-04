@@ -280,7 +280,7 @@ jobs:
       # 5️⃣5️⃣ Execute the R script and capture **all** output (stdout+stderr)
       # --------------------------------------------------------------
       - name: Run the R script and capture everything
-        id: install_step                     # give the step an ID so later steps can read its output
+        id: install_step                     # give the step an ID
         env:
           MINIOTMP: ${{ needs.checkout.outputs.temp-dir }}
         run: |
@@ -290,18 +290,20 @@ jobs:
       
           $logFile = Join-Path $env:MINIOTMP 'minioclient_install.log'
       
-          # Run Rscript – capture its exit code
+          # Run Rscript and capture its exit status
           Rscript $env:R_SCRIPT *> $logFile
-          $rc = $LASTEXITCODE   # <-- exit status of Rscript
+          $rc = $LASTEXITCODE
       
           Write-Host "✅ Installation finished – log saved to $logFile"
           Write-Host "🔎 Rscript exit code: $rc"
       
-          # Export the code as a step output (optional, for downstream jobs)
+          # Export the exit code so later steps can read it
           echo "install_rc=$rc" >> $GITHUB_OUTPUT
         shell: pwsh
+        # **Do NOT** add continue-on-error here – we want the real exit code preserved
             
       - name: Upload install log as artifact
+        if: always()                         # <-- this line guarantees execution
         uses: actions/upload-artifact@v4
         with:
           name: minioclient-debug-logs
