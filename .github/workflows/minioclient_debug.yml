@@ -301,7 +301,25 @@ jobs:
           echo "install_rc=$rc" >> $GITHUB_OUTPUT
         shell: pwsh
         # **Do NOT** add continue-on-error here – we want the real exit code preserved
-            
+
+      - name: Diagnose GitHub API connectivity
+        run: |
+          Write-Host "=== DNS lookup ==="
+          nslookup api.github.com
+      
+          Write-Host "`n=== Simple curl ==="
+          curl -s -w "\nHTTP status: %{http_code}\n" https://api.github.com/repos/cboettig/minioclient/contents/DESCRIPTION?ref=main
+      
+          Write-Host "`n=== PowerShell Invoke-WebRequest ==="
+          try {
+            $resp = Invoke-WebRequest -Uri "https://api.github.com/repos/cboettig/minioclient/contents/DESCRIPTION?ref=main" -UseBasicParsing -Headers @{ "User-Agent" = "github-actions" }
+            Write-Host "Status: $($resp.StatusCode)"
+          } catch {
+            Write-Error "Invoke-WebRequest failed: $_"
+          }
+        shell: pwsh
+
+      
       - name: Upload install log as artifact
         if: always()                         # <-- this line guarantees execution
         uses: actions/upload-artifact@v4
