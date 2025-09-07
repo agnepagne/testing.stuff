@@ -61,7 +61,7 @@ jobs:
             repo = 'cboettig/minioclient',
             ref  = 'main',
             upgrade = 'never',
-            dependencies = FALSE,
+            dependencies = TRUE,
             quiet = FALSE
           )
           
