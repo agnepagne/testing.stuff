@@ -41,4 +41,55 @@ jobs:
         with:
           extra-packages: any::rcmdcheck
 
+      - name: Diagnose & resolve pak dependency conflicts
+        id: pak_resolve
+        env:
+          # The PAT you already expose via `env:GITHUB_PAT` is enough for pak/remotes.
+          GITHUB_PAT: ${{ secrets.AGNE_PAT }}
+        run: |
+          # ----------------------------------------------------------------
+          # Install pak if it is not already present (the action may have used it already,
+          # but we explicitly load it here to be safe).
+          # ----------------------------------------------------------------
+          if (!requireNamespace("pak", quietly = TRUE)) {
+            install.packages("pak", repos = "https://cloud.r-project.org")
+          }
+    
+          # ---------------------------------------------------------------
+          # 1️⃣ Verbose conflict diagnostics – prints the exact version constraints
+          # ---------------------------------------------------------------
+          cat("\n=== DIAGNOSTIC: checking for dependency conflicts ===\n")
+          tryCatch({
+            pak::pkg_deps(".", dependencies = TRUE, conflict = "verbose")
+          }, error = function(e) {
+            cat("🔎 Conflict diagnostic finished (details may be above).\n")
+          })
+    
+          # ---------------------------------------------------------------
+          # 2️⃣ Try a normal pak install (this is what the action would have done)
+          # ---------------------------------------------------------------
+          cat("\n=== ATTEMPTING NORMAL pak install ===\n")
+          normal_ok <- tryCatch({
+            pak::pkg_install(".", dependencies = TRUE)
+            TRUE
+          }, error = function(e) {
+            cat("❌ Normal pak install failed: ", conditionMessage(e), "\n")
+            FALSE
+          })
+    
+          # ---------------------------------------------------------------
+          # 3️⃣ If the normal install failed because of a conflict,
+          #    fall back to installing while ignoring the known offenders.
+          #    Replace the vector below with the actual package names you see
+          #    in the diagnostic output (e.g. "sessioninfo", "rcmdcheck").
+          # ---------------------------------------------------------------
+          if (!normal_ok) {
+            cat("\n=== FALLBACK: installing while ignoring conflict packages ===\n")
+            ignore_pkgs <- c("sessioninfo", "rcmdcheck")   # <‑‑ edit if needed
+            pak::pkg_install(".", dependencies = TRUE, ignore = ignore_pkgs)
+          }
+    
+          cat("\n=== DEPENDENCY RESOLUTION FINISHED ===\n")
+        shell: Rscript {0}
+    
       - uses: r-lib/actions/check-r-package@v2
