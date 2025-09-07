@@ -1,266 +1,51 @@
-name: Minioclient Debug Build (Windows – resilient toolchain)
+name: Minioclient debug
 
-# ----------------------------------------------------------------------
-# Manual trigger – useful while we are debugging.
-# ----------------------------------------------------------------------
 on:
-  workflow_dispatch: {}
-
-# ----------------------------------------------------------------------
-# Use PowerShell for every step on Windows.
-# ----------------------------------------------------------------------
-defaults:
-  run:
-    shell: pwsh
+  workflow_dispatch:
 
 jobs:
-  # ==============================================================
-  # 1️⃣ Checkout – get both the repo you’re testing and the minioclient source
-  # ==============================================================
-  checkout:
-    name: Checkout repositories
-    runs-on: windows-latest
-    outputs:
-      temp-dir: ${{ steps.temp-dir.outputs.path }}
-    steps:
-      - name: Checkout this repository
-        uses: actions/checkout@v4
-
-      - name: Checkout minioclient source (reference only)
-        uses: actions/checkout@v4
-        with:
-          repository: cboettig/minioclient
-          path: minioclient-src
-          fetch-depth: 1
-
-      - name: Create a shared temporary directory
-        id: temp-dir
-        run: |
-          $tmp = Join-Path $env:TEMP ("minioclient_debug_" + [guid]::NewGuid())
-          New-Item -ItemType Directory -Path $tmp | Out-Null
-          echo "path=$tmp" >> $env:GITHUB_OUTPUT
-
-  # ==============================================================
-  # 2️⃣ Install system‑level dependencies (OpenSSL, pkg‑config, CMake, compiler)
-  # ==============================================================
-  install-system-deps:
-    name: Install native libraries & compiler
-    needs: checkout
-    runs-on: windows-latest
-    env:
-      TEMP_DIR: ${{ needs.checkout.outputs.temp-dir }}
-    steps:
-      # ------------------------------------------------------------------
-      # 2️⃣1️⃣ Bootstrap Chocolatey (if the runner somehow lacks it)
-      # ------------------------------------------------------------------
-      - name: Install Chocolatey (bootstrap if missing)
-        run: |
-          Set-ExecutionPolicy Bypass -Scope Process -Force
-          if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
-            iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
-          }
-        shell: pwsh
-
-      # ------------------------------------------------------------------
-      # 2️⃣2️⃣ Install the native packages we know we’ll need
-      # ------------------------------------------------------------------
-      - name: Install native packages (OpenSSL, pkg‑config, CMake, MinGW, VS Build Tools)
-        run: |
-          choco install -y openssl.light
-          choco install -y pkgconfiglite
-          choco install -y cmake
-          choco install -y mingw
-          choco install -y visualstudio2022buildtools `
-            --package-parameters "--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --passive --norestart"
-        shell: pwsh
-
-      # ------------------------------------------------------------------
-      # 3️⃣ Add MinGW to PATH (if it exists)
-      # ------------------------------------------------------------------
-      - name: Add MinGW bin to PATH (if present)
-        run: |
-          $mingwBin = "C:\ProgramData\chocolatey\lib\mingw\tools\install\mingw64\bin"
-          if (Test-Path $mingwBin) {
-            Write-Host "✅ Adding MinGW ($mingwBin) to PATH"
-            echo $mingwBin >> $env:GITHUB_PATH
-          } else {
-            Write-Warning "⚠️ MinGW bin folder not found – will try VS Build Tools next."
-          }
-        shell: pwsh
-
-      # ------------------------------------------------------------------
-      # 4️⃣ If MinGW wasn’t added, locate VS Build Tools and initialise MSVC
-      # ------------------------------------------------------------------
-      - name: Locate VS Build Tools, initialise MSVC, and add to PATH
-        run: |
-          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-          if (-not (Test-Path $vswhere)) {
-            Write-Error "❌ vswhere.exe not found – cannot locate VS Build Tools"
-            exit 1
-          }
-
-          $vsInstall = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-          if (-not $vsInstall) {
-            Write-Warning "⚠️ No VS Build Tools with VC component detected – skipping VS path setup."
-            exit 0
-          }
-
-          Write-Host "✅ VS Build Tools found at $vsInstall"
-
-          $msvcRoot = Join-Path $vsInstall "VC\Tools\MSVC"
-          if (-not (Test-Path $msvcRoot)) {
-            Write-Warning "⚠️ $msvcRoot does not exist yet – forcing a first‑time init."
-            $vcvars = Join-Path $vsInstall "Common7\Tools\VsDevCmd.bat"
-            if (Test-Path $vcvars) {
-              cmd /c "`"$vcvars`" && echo Init done"
-            } else {
-              Write-Error "❌ Could not find VsDevCmd.bat – cannot initialise MSVC."
-            }
-            Start-Sleep -Seconds 5
-          }
-
-          $msvcVersion = Get-ChildItem $msvcRoot -Directory |
-                         Sort-Object Name -Descending |
-                         Select-Object -First 1
-          if (-not $msvcVersion) {
-            Write-Error "❌ No MSVC version folder found under $msvcRoot"
-            exit 1
-          }
-
-          $vcBin = Join-Path $msvcVersion.FullName "bin\Hostx64\x64"
-          if (Test-Path $vcBin) {
-            Write-Host "✅ Adding VS C++ bin ($vcBin) to PATH"
-            echo $vcBin >> $env:GITHUB_PATH
-          } else {
-            Write-Error "❌ Expected VC bin folder not found: $vcBin"
-          }
-        shell: pwsh
-
-      # ------------------------------------------------------------------
-      # 5️⃣ Verify that a compiler is now reachable
-      # ------------------------------------------------------------------
-      - name: Verify compiler availability
-        run: |
-          Write-Host "`n=== Compiler version checks ==="
-          if (Get-Command gcc -ErrorAction SilentlyContinue) {
-            gcc --version
-          } elseif (Get-Command cl -ErrorAction SilentlyContinue) {
-            cl
-          } else {
-            Write-Error "❌ No C/C++ compiler found in PATH after the setup steps."
-          }
-
-          Write-Host "`n=== pkg-config check ==="
-          pkg-config --version || Write-Warning "pkg-config not found"
-
-          Write-Host "`n=== OpenSSL version ==="
-          openssl version || Write-Warning "OpenSSL not found"
-        shell: pwsh
-
-      # ------------------------------------------------------------------
-      # 6️⃣ Export PKG_CONFIG_PATH so OpenSSL’s .pc file is visible
-      # ------------------------------------------------------------------
-      - name: Set PKG_CONFIG_PATH for OpenSSL
-        run: |
-          $opensslPc = "C:\ProgramData\chocolatey\lib\openssl.light\tools\openssl\share\pkgconfig"
-          if (Test-Path $opensslPc) {
-            $env:PKG_CONFIG_PATH = "$opensslPc;$env:PKG_CONFIG_PATH"
-            Write-Host "✅ PKG_CONFIG_PATH set to $opensslPc"
-          } else {
-            Write-Warning "⚠️ OpenSSL pkg‑config directory not found – some packages may not locate OpenSSL."
-          }
-        shell: pwsh
-
-  # ==============================================================
-  # 3️⃣ OS‑level diagnostics (helps spot missing headers, wrong arch, etc.)
-  # ==============================================================
-  diagnostics-os:
-    name: Gather OS & compiler diagnostics
-    needs: [checkout, install-system-deps]
-    runs-on: windows-latest
-    env:
-      TEMP_DIR: ${{ needs.checkout.outputs.temp-dir }}
-    steps:
-      - name: System information (shortened)
-        run: |
-          systeminfo | Select-Object -First 20
-        shell: pwsh
-
-      - name: Important environment variables
-        run: |
-          Get-ChildItem Env: | Where-Object {
-            $_.Name -match '^(PATH|INCLUDE|LIB|PKG_CONFIG_PATH|OPENSSL_ROOT_DIR|VSINSTALLDIR)$'
-          } | Format-Table -AutoSize
-        shell: pwsh
-
-      - name: List files under the temporary directory (debug aid)
-        run: |
-          Get-ChildItem -Recurse -Force $env:TEMP | Out-String
-        shell: pwsh
-
-  # ==============================================================
-  # 4️⃣ Install R and the `remotes` helper package
-  # ==============================================================
-  setup-r:
-    name: Install R (v4.4) and remotes
-    needs: checkout
-    runs-on: windows-latest
-    env:
-      TEMP_DIR: ${{ needs.checkout.outputs.temp-dir }}
-    steps:
-      - name: Install R (official binary from r‑lib)
-        uses: r-lib/actions/setup-r@v2
-        with:
-          r-version: '4.4'
-          use-public-rspm: true
-
-      - name: Install R package `remotes`
-        run: |
-          install.packages('remotes', repos='https://cloud.r-project.org')
-        shell: Rscript {0}
-
-      - name: Record R version & library path (for debugging)
-        run: |
-          Rscript -e "cat('R version:', getRversion(), '\n')"
-          Rscript -e "cat('R lib dir:', .libPaths()[1], '\n')"
-        shell: pwsh
-
-  # ==============================================================
-  # 5️⃣ Attempt to install minioclient – capture **all** output
-  # ==============================================================
   install-minioclient:
-    name: Install minioclient (full log)
-    needs: [checkout, setup-r, install-system-deps, diagnostics-os]
     runs-on: windows-latest
-    env:
-      # Use the built‑in runner temp folder – it always exists and is short.
-      MINIOTMP: ${{ runner.temp }}   # e.g. C:\Users\runneradmin\AppData\Local\Temp
     steps:
-      # -----------------------------------------------------------------
-      # 1️⃣ Checkout again (needed for a fresh R session)
-      # -----------------------------------------------------------------
-      - name: Checkout repository (again)
+      # -------------------------------------------------------------
+      # 1️⃣  Checkout (needed for a fresh R session)
+      # -------------------------------------------------------------
+      - name: Checkout repository
         uses: actions/checkout@v4
-  
-      # -----------------------------------------------------------------
-      # 2️⃣ Install R (same version you used earlier)
-      # -----------------------------------------------------------------
-      - name: Install R (v4.4)
+
+      # -------------------------------------------------------------
+      # 2️⃣  Set up a short‑lived temp directory and expose it as $MINIOTMP
+      # -------------------------------------------------------------
+      - name: Prepare temporary folder
+        id: prep_tmp
+        run: |
+          # $env:TEMP is the runner’s built‑in temp folder (always exists)
+          $runId   = [guid]::NewGuid().ToString()
+          $tmpDir  = Join-Path $env:TEMP "minioclient_debug_$runId"
+          New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
+          Write-Host "TMPDIR=$tmpDir" >> $env:GITHUB_ENV   # make it available to later steps
+          Write-Host "Created temp dir: $tmpDir"
+        shell: pwsh
+
+      # -------------------------------------------------------------
+      # 3️⃣  Install R (v4.4) – same version you used elsewhere
+      # -------------------------------------------------------------
+      - name: Install R
         uses: r-lib/actions/setup-r@v2
         with:
           r-version: '4.4'
           use-public-rspm: true
-  
-      # -----------------------------------------------------------------
-      # 3️⃣ Install the `remotes` package (needed for install_github)
-      # -----------------------------------------------------------------
-      - name: Install R package `remotes`
+
+      # -------------------------------------------------------------
+      # 4️⃣  Install the `remotes` package (needed for install_github)
+      # -------------------------------------------------------------
+      - name: Install remotes package
         run: install.packages('remotes', repos='https://cloud.r-project.org')
         shell: Rscript {0}
-  
-      # -----------------------------------------------------------------
-      # 4️⃣ (Optional) Export a PAT to avoid GitHub rate limits
-      # -----------------------------------------------------------------
+
+      # -------------------------------------------------------------
+      # 5️⃣  (Optional) Export a PAT to avoid GitHub rate limits
+      # -------------------------------------------------------------
       - name: Export GitHub PAT (if you have one)
         env:
           GITHUB_PAT: ${{ secrets.GITHUB_PAT }}   # create this secret if you need it
@@ -272,11 +57,11 @@ jobs:
             Write-Host "⚠️ No PAT supplied – using anonymous API (rate‑limited)."
           }
         shell: pwsh
-  
-      # -----------------------------------------------------------------
-      # 5️⃣ Create the R script that performs the install
-      # -----------------------------------------------------------------
-      - name: Write R script that installs minioclient
+
+      # -------------------------------------------------------------
+      # 6️⃣  Write the R script that will install minioclient
+      # -------------------------------------------------------------
+      - name: Write R installer script
         run: |
           $rScript = @"
           # ------------------------------------------------------------
@@ -301,65 +86,36 @@ jobs:
           Write-Host "✅ R script written to $scriptPath"
           echo "R_SCRIPT=$scriptPath" >> $GITHUB_ENV
         shell: pwsh
-  
-      # -----------------------------------------------------------------
-      # 6️⃣ **Create the log directory** and run the R script
-      # -----------------------------------------------------------------
-      - name: Run the R script and capture everything
-        id: install_step
+
+      # -------------------------------------------------------------
+      # 7️⃣  Run the R script, capture everything to a log file
+      # -------------------------------------------------------------
+      - name: Run R script and capture log
+        id: run_install
         env:
-          MINIOTMP: ${{ env.MINIOTMP }}   # short temp folder
+          MINIOTMP: ${{ env.TMPDIR }}   # <-- comes from step 2
         run: |
-          # Ensure the sub‑folder exists (the UUID makes each run isolated)
-          $runId   = [guid]::NewGuid().ToString()
-          $logDir  = Join-Path $env:MINIOTMP "minioclient_debug_$runId"
-          New-Item -ItemType Directory -Path $logDir -Force | Out-Null
-  
-          $logFile = Join-Path $logDir 'minioclient_install.log'
-  
-          Write-Host "🗂️ Log directory created at $logDir"
-          Write-Host "📄 Log file will be $logFile"
-  
-          # Execute the R script, redirect both stdout and stderr to the log file
+          $logFile = Join-Path $env:MINIOTMP 'minioclient_install.log'
+          Write-Host "Log will be written to $logFile"
+
+          # Execute the R script; redirect both stdout and stderr to the log
           Rscript $env:R_SCRIPT *> $logFile
           $rc = $LASTEXITCODE
-  
+
           Write-Host "✅ Installation finished – log saved to $logFile"
           Write-Host "🔎 Rscript exit code: $rc"
-  
-          # Export the exit code and the log path for later steps
+
+          # Export values for later steps
           echo "install_rc=$rc"   >> $GITHUB_OUTPUT
           echo "log_path=$logFile" >> $GITHUB_OUTPUT
         shell: pwsh
-  
-      # -----------------------------------------------------------------
-      # 7️⃣ Upload the log **even if the install failed**
-      # -----------------------------------------------------------------
+
+      # -------------------------------------------------------------
+      # 8️⃣  Upload the log **even if the install failed**
+      # -------------------------------------------------------------
       - name: Upload install log as artifact
-        if: always()                                 # run regardless of success/failure
+        if: always()                               # run regardless of success/failure
         uses: actions/upload-artifact@v4
         with:
           name: minioclient-debug-logs
-          path: ${{ steps.install_step.outputs.log_path }}
-          
-  # ==============================================================
-  # 6️⃣ Optional cleanup (keeps the runner tidy)
-  # ==============================================================
-  post-cleanup:
-    name: Delete temporary folder (optional)
-    needs: [checkout, install-minioclient]
-    runs-on: windows-latest
-    if: always()
-    steps:
-      - name: Remove the shared temp directory
-        env:
-          CLEANUP_DIR: ${{ needs.checkout.outputs.temp-dir }}
-        run: |
-          if (-not (Test-Path $env:CLEANUP_DIR)) {
-            Write-Warning "🟡 Temp directory not found – it may have already been removed."
-            exit 0
-          }
-  
-          Write-Host "🗑️ Deleting temporary directory: $env:CLEANUP_DIR"
-          Remove-Item -Recurse -Force -LiteralPath $env:CLEANUP_DIR
-        shell: pwsh
+          path: ${{ steps.run_install.outputs.log_path }}
