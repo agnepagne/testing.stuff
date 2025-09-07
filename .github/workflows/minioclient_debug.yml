@@ -233,94 +233,115 @@ jobs:
     needs: [checkout, setup-r, install-system-deps, diagnostics-os]
     runs-on: windows-latest
     env:
-      TEMP_DIR: ${{ needs.checkout.outputs.temp-dir }}
+      # Use the built‑in runner temp folder – it always exists and is short.
+      MINIOTMP: ${{ runner.temp }}   # e.g. C:\Users\runneradmin\AppData\Local\Temp
     steps:
-    - name: Checkout repository (again)
-      uses: actions/checkout@v4
-
-    - name: Install R (v4.4)
-      uses: r-lib/actions/setup-r@v2
-      with:
-        r-version: '4.4'
-        use-public-rspm: true
-
-    - name: Install remotes package
-      run: install.packages('remotes', repos='https://cloud.r-project.org')
-      shell: Rscript {0}
-
-    - name: Export GitHub PAT (if you have one)
-      env:
-        GITHUB_PAT: ${{ secrets.AGNE_PAT }}   # optional – create the secret if you hit rate limits
-      run: |
-        if ($env:GITHUB_PAT) {
-          echo "GITHUB_PAT=$env:GITHUB_PAT" >> $GITHUB_ENV
-          Write-Host "✅ PAT exported for remotes"
-        } else {
-          Write-Host "⚠️ No PAT supplied – using anonymous GitHub API (rate‑limited)."
-        }
-      shell: pwsh
-
-    - name: Diagnose GitHub API connectivity (optional, can be removed later)
-      run: |
-        Write-Host "=== DNS ==="
-        nslookup api.github.com
-        Write-Host "`n=== curl ==="
-        curl -s -w "\nHTTP status: %{http_code}\n" https://api.github.com/repos/cboettig/minioclient/contents/DESCRIPTION?ref=main
-      shell: pwsh
-
-    - name: Create R script that installs minioclient
-      run: |
-        $rScript = @"
-        # Print environment (helps debugging)
-        cat('--- ENV BEFORE INSTALL ---\n')
-        print(Sys.getenv())
-        cat('\n--- START minioclient install ---\n')
-        
-        remotes::install_github(
-          repo = 'cboettig/minioclient',
-          ref  = 'main',
-          upgrade = 'never',
-          dependencies = FALSE,
-          quiet = FALSE
-        )
-        
-        cat('\n--- END minioclient install ---\n')
-        "@
-        $scriptPath = Join-Path $env:TEMP 'install_minioclient.R'
-        Set-Content -Path $scriptPath -Value $rScript -Encoding UTF8
-        Write-Host "✅ R script written to $scriptPath"
-        echo "R_SCRIPT=$scriptPath" >> $GITHUB_ENV
-      shell: pwsh
-
-    - name: Install minioclient (with retry)
-      id: install_step
-      env:
-        MINIOTMP: ${{ needs.checkout.outputs.temp-dir }}
-      run: |
-        $maxAttempts = 3
-        $attempt = 0
-        $logFile = Join-Path $env:MINIOTMP 'minioclient_install.log'
-        while ($attempt -lt $maxAttempts) {
-          $attempt++
-          Write-Host "Attempt $attempt of $maxAttempts ..."
+      # -----------------------------------------------------------------
+      # 1️⃣ Checkout again (needed for a fresh R session)
+      # -----------------------------------------------------------------
+      - name: Checkout repository (again)
+        uses: actions/checkout@v4
+  
+      # -----------------------------------------------------------------
+      # 2️⃣ Install R (same version you used earlier)
+      # -----------------------------------------------------------------
+      - name: Install R (v4.4)
+        uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: '4.4'
+          use-public-rspm: true
+  
+      # -----------------------------------------------------------------
+      # 3️⃣ Install the `remotes` package (needed for install_github)
+      # -----------------------------------------------------------------
+      - name: Install R package `remotes`
+        run: install.packages('remotes', repos='https://cloud.r-project.org')
+        shell: Rscript {0}
+  
+      # -----------------------------------------------------------------
+      # 4️⃣ (Optional) Export a PAT to avoid GitHub rate limits
+      # -----------------------------------------------------------------
+      - name: Export GitHub PAT (if you have one)
+        env:
+          GITHUB_PAT: ${{ secrets.GITHUB_PAT }}   # create this secret if you need it
+        run: |
+          if ($env:GITHUB_PAT) {
+            echo "GITHUB_PAT=$env:GITHUB_PAT" >> $GITHUB_ENV
+            Write-Host "✅ PAT exported for remotes"
+          } else {
+            Write-Host "⚠️ No PAT supplied – using anonymous API (rate‑limited)."
+          }
+        shell: pwsh
+  
+      # -----------------------------------------------------------------
+      # 5️⃣ Create the R script that performs the install
+      # -----------------------------------------------------------------
+      - name: Write R script that installs minioclient
+        run: |
+          $rScript = @"
+          # ------------------------------------------------------------
+          # Show environment (helps debugging)
+          # ------------------------------------------------------------
+          cat('--- ENV BEFORE INSTALL ---\n')
+          print(Sys.getenv())
+          cat('\n--- START minioclient install ---\n')
+          
+          remotes::install_github(
+            repo = 'cboettig/minioclient',
+            ref  = 'main',
+            upgrade = 'never',
+            dependencies = FALSE,
+            quiet = FALSE
+          )
+          
+          cat('\n--- END minioclient install ---\n')
+          "@
+          $scriptPath = Join-Path $env:TEMP 'install_minioclient.R'
+          Set-Content -Path $scriptPath -Value $rScript -Encoding UTF8
+          Write-Host "✅ R script written to $scriptPath"
+          echo "R_SCRIPT=$scriptPath" >> $GITHUB_ENV
+        shell: pwsh
+  
+      # -----------------------------------------------------------------
+      # 6️⃣ **Create the log directory** and run the R script
+      # -----------------------------------------------------------------
+      - name: Run the R script and capture everything
+        id: install_step
+        env:
+          MINIOTMP: ${{ env.MINIOTMP }}   # short temp folder
+        run: |
+          # Ensure the sub‑folder exists (the UUID makes each run isolated)
+          $runId   = [guid]::NewGuid().ToString()
+          $logDir  = Join-Path $env:MINIOTMP "minioclient_debug_$runId"
+          New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+  
+          $logFile = Join-Path $logDir 'minioclient_install.log'
+  
+          Write-Host "🗂️ Log directory created at $logDir"
+          Write-Host "📄 Log file will be $logFile"
+  
+          # Execute the R script, redirect both stdout and stderr to the log file
           Rscript $env:R_SCRIPT *> $logFile
-          if ($LASTEXITCODE -eq 0) { break }
-          Write-Warning "Rscript failed (exit $LASTEXITCODE). Waiting before retry..."
-          Start-Sleep -Seconds 30
-        }
-        # Propagate the final exit code so the job can still be marked failed if all attempts failed
-        exit $LASTEXITCODE
-      shell: pwsh
-
-    - name: Upload install log as artifact
-      if: always()                     # ensures the artifact is uploaded even on failure
-      uses: actions/upload-artifact@v4
-      with:
-        name: minioclient-debug-logs
-        path: |
-          ${{ needs.checkout.outputs.temp-dir }}\minioclient_install.log
-          ${{ needs.checkout.outputs.temp-dir }}/*.log
-
+          $rc = $LASTEXITCODE
+  
+          Write-Host "✅ Installation finished – log saved to $logFile"
+          Write-Host "🔎 Rscript exit code: $rc"
+  
+          # Export the exit code and the log path for later steps
+          echo "install_rc=$rc"   >> $GITHUB_OUTPUT
+          echo "log_path=$logFile" >> $GITHUB_OUTPUT
+        shell: pwsh
+  
+      # -----------------------------------------------------------------
+      # 7️⃣ Upload the log **even if the install failed**
+      # -----------------------------------------------------------------
+      - name: Upload install log as artifact
+        if: always()                                 # run regardless of success/failure
+        uses: actions/upload-artifact@v4
+        with:
+          name: minioclient-debug-logs
+          path: ${{ steps.install_step.outputs.log_path }}
+          
   # ==============================================================
   # 6️⃣ Optional cleanup (keeps the runner tidy)
   # ==============================================================
