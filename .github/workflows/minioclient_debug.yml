@@ -1,51 +1,37 @@
-name: Minioclient debug
+name: Minioclient Debug
 
 on:
-  workflow_dispatch:
+  workflow_dispatch:   # manual trigger – you can also add push/pull_request etc.
 
 jobs:
   install-minioclient:
     runs-on: windows-latest
     steps:
-      # -------------------------------------------------------------
-      # 1️⃣  Checkout (needed for a fresh R session)
-      # -------------------------------------------------------------
+      # ---------------------------------------------------------
+      # 0️⃣  Checkout (needed for a clean R session)
+      # ---------------------------------------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # -------------------------------------------------------------
-      # 2️⃣  Set up a short‑lived temp directory and expose it as $MINIOTMP
-      # -------------------------------------------------------------
-      - name: Prepare temporary folder
-        id: prep_tmp
-        run: |
-          # $env:TEMP is the runner’s built‑in temp folder (always exists)
-          $runId   = [guid]::NewGuid().ToString()
-          $tmpDir  = Join-Path $env:TEMP "minioclient_debug_$runId"
-          New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
-          Write-Host "TMPDIR=$tmpDir" >> $env:GITHUB_ENV   # make it available to later steps
-          Write-Host "Created temp dir: $tmpDir"
-        shell: pwsh
-
-      # -------------------------------------------------------------
-      # 3️⃣  Install R (v4.4) – same version you used elsewhere
-      # -------------------------------------------------------------
-      - name: Install R
+      # ---------------------------------------------------------
+      # 1️⃣  Set up R (same version you used elsewhere)
+      # ---------------------------------------------------------
+      - name: Install R (v4.4)
         uses: r-lib/actions/setup-r@v2
         with:
           r-version: '4.4'
           use-public-rspm: true
 
-      # -------------------------------------------------------------
-      # 4️⃣  Install the `remotes` package (needed for install_github)
-      # -------------------------------------------------------------
+      # ---------------------------------------------------------
+      # 2️⃣  Install the `remotes` package (used for install_github)
+      # ---------------------------------------------------------
       - name: Install remotes package
         run: install.packages('remotes', repos='https://cloud.r-project.org')
         shell: Rscript {0}
 
-      # -------------------------------------------------------------
-      # 5️⃣  (Optional) Export a PAT to avoid GitHub rate limits
-      # -------------------------------------------------------------
+      # ---------------------------------------------------------
+      # 3️⃣  (Optional) Export a PAT to avoid GitHub rate limits
+      # ---------------------------------------------------------
       - name: Export GitHub PAT (if you have one)
         env:
           GITHUB_PAT: ${{ secrets.GITHUB_PAT }}   # create this secret if you need it
@@ -58,14 +44,14 @@ jobs:
           }
         shell: pwsh
 
-      # -------------------------------------------------------------
-      # 6️⃣  Write the R script that will install minioclient
-      # -------------------------------------------------------------
+      # ---------------------------------------------------------
+      # 4️⃣  Write a tiny R script that does the install
+      # ---------------------------------------------------------
       - name: Write R installer script
         run: |
           $rScript = @"
           # ------------------------------------------------------------
-          # Show environment (helps debugging)
+          # Show a few env vars (helps debugging)
           # ------------------------------------------------------------
           cat('--- ENV BEFORE INSTALL ---\n')
           print(Sys.getenv())
@@ -87,34 +73,52 @@ jobs:
           echo "R_SCRIPT=$scriptPath" >> $GITHUB_ENV
         shell: pwsh
 
-      # -------------------------------------------------------------
-      # 7️⃣  Run the R script, capture everything to a log file
-      # -------------------------------------------------------------
-      - name: Run R script and capture log
+      # ---------------------------------------------------------
+      # 5️⃣  **Create a unique log folder** and remember its path
+      # ---------------------------------------------------------
+      - name: Prepare a unique log folder
+        id: log_prep
+        run: |
+          # ${{
+          #   runner.temp
+          # }} is a short, always‑present temp directory (e.g. C:\Users\runneradmin\AppData\Local\Temp)
+          $baseTmp = "${{ runner.temp }}"
+          $runId   = [guid]::NewGuid().ToString()
+          $logDir  = Join-Path $baseTmp "minioclient_debug_$runId"
+          New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+          Write-Host "LOGDIR=$logDir" >> $GITHUB_ENV   # make it available to later steps
+          Write-Host "✅ Created log folder: $logDir"
+        shell: pwsh
+
+      # ---------------------------------------------------------
+      # 6️⃣  Run the R script **and pipe everything to a log file**
+      # ---------------------------------------------------------
+      - name: Run R installer and capture log
         id: run_install
         env:
-          MINIOTMP: ${{ env.TMPDIR }}   # <-- comes from step 2
+          LOGDIR: ${{ env.LOGDIR }}   # comes from the previous step
         run: |
-          $logFile = Join-Path $env:MINIOTMP 'minioclient_install.log'
-          Write-Host "Log will be written to $logFile"
+          $logFile = Join-Path $env:LOGDIR 'minioclient_install.log'
+          Write-Host "🗒️ Log will be written to $logFile"
 
-          # Execute the R script; redirect both stdout and stderr to the log
-          Rscript $env:R_SCRIPT *> $logFile
+          # `tee` writes to the file *and* forwards the output to the job log.
+          # The `2>&1` ensures both stdout and stderr are captured.
+          Rscript $env:R_SCRIPT 2>&1 | Tee-Object -FilePath $logFile
           $rc = $LASTEXITCODE
 
-          Write-Host "✅ Installation finished – log saved to $logFile"
-          Write-Host "🔎 Rscript exit code: $rc"
+          Write-Host "✅ R script finished – exit code $rc"
+          Write-Host "📄 Log saved at $logFile"
 
-          # Export values for later steps
+          # Export for the artifact step
           echo "install_rc=$rc"   >> $GITHUB_OUTPUT
           echo "log_path=$logFile" >> $GITHUB_OUTPUT
         shell: pwsh
 
-      # -------------------------------------------------------------
-      # 8️⃣  Upload the log **even if the install failed**
-      # -------------------------------------------------------------
+      # ---------------------------------------------------------
+      # 7️⃣  **Always** upload the log (even if the install failed)
+      # ---------------------------------------------------------
       - name: Upload install log as artifact
-        if: always()                               # run regardless of success/failure
+        if: always()                     # run regardless of success/failure
         uses: actions/upload-artifact@v4
         with:
           name: minioclient-debug-logs
