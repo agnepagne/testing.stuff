@@ -2,7 +2,7 @@ Package: testing.stuff
 Title: Just Testing
 Version: 0.0.0.9000
 Authors@R: 
-    as.person("Agne Larsson <agne.larsson@gmail.com> [aut, cre]"))
+    as.person("Agne Larsson <agne.larsson@gmail.com> [aut, cre]")
 Description: Just a test package to try GH Actions stuff.
 License: GPL-3
 Encoding: UTF-8
