@@ -34,7 +34,7 @@ jobs:
       # ---------------------------------------------------------
       - name: Export GitHub PAT (if you have one)
         env:
-          GITHUB_PAT: ${{ secrets.GITHUB_PAT }}   # create this secret if you need it
+          GITHUB_PAT: ${{ secrets.AGNE_PAT }}   # create this secret if you need it
         run: |
           if ($env:GITHUB_PAT) {
             echo "GITHUB_PAT=$env:GITHUB_PAT" >> $GITHUB_ENV
