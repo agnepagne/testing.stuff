@@ -79,9 +79,6 @@ jobs:
       - name: Prepare a unique log folder
         id: log_prep
         run: |
-          # ${{
-          #   runner.temp
-          # }} is a short, always‑present temp directory (e.g. C:\Users\runneradmin\AppData\Local\Temp)
           $baseTmp = "${{ runner.temp }}"
           $runId   = [guid]::NewGuid().ToString()
           $logDir  = Join-Path $baseTmp "minioclient_debug_$runId"
