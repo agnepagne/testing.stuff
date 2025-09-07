@@ -235,99 +235,91 @@ jobs:
     env:
       TEMP_DIR: ${{ needs.checkout.outputs.temp-dir }}
     steps:
-      - name: Checkout this repository (again – needed for R session)
-        uses: actions/checkout@v4
-  
-      - name: Install R (v4.4) – same version as earlier
-        uses: r-lib/actions/setup-r@v2
-        with:
-          r-version: '4.4'
-          use-public-rspm: true
-  
-      - name: Install R package `remotes`
-        run: |
-          install.packages('remotes', repos='https://cloud.r-project.org')
-        shell: Rscript {0}
-  
-      - name: Create R script that installs minioclient and prints env
-        run: |
-          $rScript = @"
-          # ------------------------------------------------------------
-          # Print the R environment (helps debugging)
-          # ------------------------------------------------------------
-          cat('--- ENV BEFORE INSTALL ---\n')
-          print(Sys.getenv())
-          cat('\n--- START minioclient install ---\n')
-          
-          remotes::install_github(
-            repo = 'cboettig/minioclient',
-            ref  = 'main',
-            upgrade = 'never',
-            dependencies = FALSE,
-            quiet = FALSE
-          )
-          
-          cat('\n--- END minioclient install ---\n')
-          "@
-  
-          $scriptPath = Join-Path $env:TEMP 'install_minioclient.R'
-          Set-Content -Path $scriptPath -Value $rScript -Encoding UTF8
-          Write-Host "✅ R script written to $scriptPath"
-          echo "R_SCRIPT=$scriptPath" >> $env:GITHUB_ENV
-        shell: pwsh
+    - name: Checkout repository (again)
+      uses: actions/checkout@v4
 
-      # --------------------------------------------------------------
-      # 5️⃣5️⃣ Execute the R script and capture **all** output (stdout+stderr)
-      # --------------------------------------------------------------
-      - name: Run the R script and capture everything
-        id: install_step                     # give the step an ID
-        env:
-          MINIOTMP: ${{ needs.checkout.outputs.temp-dir }}
-        run: |
-          if (-not (Test-Path $env:MINIOTMP)) {
-            New-Item -ItemType Directory -Path $env:MINIOTMP | Out-Null
-          }
-      
-          $logFile = Join-Path $env:MINIOTMP 'minioclient_install.log'
-      
-          # Run Rscript and capture its exit status
+    - name: Install R (v4.4)
+      uses: r-lib/actions/setup-r@v2
+      with:
+        r-version: '4.4'
+        use-public-rspm: true
+
+    - name: Install remotes package
+      run: install.packages('remotes', repos='https://cloud.r-project.org')
+      shell: Rscript {0}
+
+    - name: Export GitHub PAT (if you have one)
+      env:
+        GITHUB_PAT: ${{ secrets.GITHUB_PAT }}   # optional – create the secret if you hit rate limits
+      run: |
+        if ($env:GITHUB_PAT) {
+          echo "GITHUB_PAT=$env:GITHUB_PAT" >> $GITHUB_ENV
+          Write-Host "✅ PAT exported for remotes"
+        } else {
+          Write-Host "⚠️ No PAT supplied – using anonymous GitHub API (rate‑limited)."
+        }
+      shell: pwsh
+
+    - name: Diagnose GitHub API connectivity (optional, can be removed later)
+      run: |
+        Write-Host "=== DNS ==="
+        nslookup api.github.com
+        Write-Host "`n=== curl ==="
+        curl -s -w "\nHTTP status: %{http_code}\n" https://api.github.com/repos/cboettig/minioclient/contents/DESCRIPTION?ref=main
+      shell: pwsh
+
+    - name: Create R script that installs minioclient
+      run: |
+        $rScript = @"
+        # Print environment (helps debugging)
+        cat('--- ENV BEFORE INSTALL ---\n')
+        print(Sys.getenv())
+        cat('\n--- START minioclient install ---\n')
+        
+        remotes::install_github(
+          repo = 'cboettig/minioclient',
+          ref  = 'main',
+          upgrade = 'never',
+          dependencies = FALSE,
+          quiet = FALSE
+        )
+        
+        cat('\n--- END minioclient install ---\n')
+        "@
+        $scriptPath = Join-Path $env:TEMP 'install_minioclient.R'
+        Set-Content -Path $scriptPath -Value $rScript -Encoding UTF8
+        Write-Host "✅ R script written to $scriptPath"
+        echo "R_SCRIPT=$scriptPath" >> $GITHUB_ENV
+      shell: pwsh
+
+    - name: Install minioclient (with retry)
+      id: install_step
+      env:
+        MINIOTMP: ${{ needs.checkout.outputs.temp-dir }}
+      run: |
+        $maxAttempts = 3
+        $attempt = 0
+        $logFile = Join-Path $env:MINIOTMP 'minioclient_install.log'
+        while ($attempt -lt $maxAttempts) {
+          $attempt++
+          Write-Host "Attempt $attempt of $maxAttempts ..."
           Rscript $env:R_SCRIPT *> $logFile
-          $rc = $LASTEXITCODE
-      
-          Write-Host "✅ Installation finished – log saved to $logFile"
-          Write-Host "🔎 Rscript exit code: $rc"
-      
-          # Export the exit code so later steps can read it
-          echo "install_rc=$rc" >> $GITHUB_OUTPUT
-        shell: pwsh
-        # **Do NOT** add continue-on-error here – we want the real exit code preserved
+          if ($LASTEXITCODE -eq 0) { break }
+          Write-Warning "Rscript failed (exit $LASTEXITCODE). Waiting before retry..."
+          Start-Sleep -Seconds 30
+        }
+        # Propagate the final exit code so the job can still be marked failed if all attempts failed
+        exit $LASTEXITCODE
+      shell: pwsh
 
-      - name: Diagnose GitHub API connectivity
-        run: |
-          Write-Host "=== DNS lookup ==="
-          nslookup api.github.com
-      
-          Write-Host "`n=== Simple curl ==="
-          curl -s -w "\nHTTP status: %{http_code}\n" https://api.github.com/repos/cboettig/minioclient/contents/DESCRIPTION?ref=main
-      
-          Write-Host "`n=== PowerShell Invoke-WebRequest ==="
-          try {
-            $resp = Invoke-WebRequest -Uri "https://api.github.com/repos/cboettig/minioclient/contents/DESCRIPTION?ref=main" -UseBasicParsing -Headers @{ "User-Agent" = "github-actions" }
-            Write-Host "Status: $($resp.StatusCode)"
-          } catch {
-            Write-Error "Invoke-WebRequest failed: $_"
-          }
-        shell: pwsh
-
-      
-      - name: Upload install log as artifact
-        if: always()                         # <-- this line guarantees execution
-        uses: actions/upload-artifact@v4
-        with:
-          name: minioclient-debug-logs
-          path: |
-            ${{ needs.checkout.outputs.temp-dir }}\minioclient_install.log
-            ${{ needs.checkout.outputs.temp-dir }}/*.log
+    - name: Upload install log as artifact
+      if: always()                     # ensures the artifact is uploaded even on failure
+      uses: actions/upload-artifact@v4
+      with:
+        name: minioclient-debug-logs
+        path: |
+          ${{ needs.checkout.outputs.temp-dir }}\minioclient_install.log
+          ${{ needs.checkout.outputs.temp-dir }}/*.log
 
   # ==============================================================
   # 6️⃣ Optional cleanup (keeps the runner tidy)
