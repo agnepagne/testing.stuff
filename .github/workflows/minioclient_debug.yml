@@ -250,7 +250,7 @@ jobs:
 
     - name: Export GitHub PAT (if you have one)
       env:
-        GITHUB_PAT: ${{ secrets.GITHUB_PAT }}   # optional – create the secret if you hit rate limits
+        GITHUB_PAT: ${{ secrets.AGNE_PAT }}   # optional – create the secret if you hit rate limits
       run: |
         if ($env:GITHUB_PAT) {
           echo "GITHUB_PAT=$env:GITHUB_PAT" >> $GITHUB_ENV
