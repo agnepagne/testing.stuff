@@ -15,8 +15,7 @@ jobs:
           - {os: ubuntu-latest,   r: 'release'}
 
     env:
-      # Export the PAT for the whole job (will be re‑exported later as well)
-      GITHUB_PAT: ${{ secrets.AGNE_PAT }}
+      GITHUB_PAT: ${{ secrets.AGNE_PAT }}   # exported for every step
       R_KEEP_PKG_SOURCE: yes
 
     steps:
@@ -42,7 +41,7 @@ jobs:
         shell: powershell
 
       # --------------------------------------------------------------
-      # 2️⃣ Re‑export the PAT (ensures it survives any caching step)
+      # 2️⃣ Re‑export the PAT (makes sure it survives any caching step)
       # --------------------------------------------------------------
       - name: Export GitHub PAT for R
         run: echo "GITHUB_PAT=${{ secrets.AGNE_PAT }}" >> $GITHUB_ENV
@@ -69,42 +68,63 @@ jobs:
           use-public-rspm: true
 
       # --------------------------------------------------------------
-      # 6️⃣ Install the *latest* pak (>= 0.6.0) – needed for `ignore`
+      # 6️⃣ **ONE** step that (a) removes old pak, (b) installs newest pak,
+      #     (c) sets token options, (d) runs diagnostics & install.
       # --------------------------------------------------------------
-      - name: Install latest pak (>= 0.6.0)
+      - name: Install latest pak & resolve dependencies (diagnostic + fallback)
+        env:
+          GITHUB_PAT: ${{ secrets.AGNE_PAT }}   # make sure it’s visible inside R
         run: |
+          # ------------------------------------------------------------------
+          # Helper to print sections nicely
+          # ------------------------------------------------------------------
+          hdr <- function(txt) cat("\n=== ", txt, " ===\n", sep = "")
+
+          # ------------------------------------------------------------------
+          # 0️⃣ Clean any cached copy of pak (so we definitely load the fresh one)
+          # ------------------------------------------------------------------
+          hdr("Removing any cached pak")
+          pkgs_dir <- .libPaths()[1]               # first entry is the writable lib dir
+          pak_path <- file.path(pkgs_dir, "pak")
+          if (dir.exists(pak_path)) {
+            unlink(pak_path, recursive = TRUE, force = TRUE)
+            cat("Removed old pak at", pak_path, "\n")
+          }
+
+          # ------------------------------------------------------------------
+          # 1️⃣ Install the newest pak from CRAN
+          # ------------------------------------------------------------------
+          hdr("Installing latest pak (>= 0.6.0)")
           install.packages("pak", repos = "https://cloud.r-project.org")
           pak_ver <- as.character(packageVersion("pak"))
-          cat("pak version:", pak_ver, "\n")
+          cat("pak version installed:", pak_ver, "\n")
           if (utils::compareVersion(pak_ver, "0.6.0") < 0) {
-            stop("pak is too old – aborting")
+            stop("pak version is too old – aborting")
           }
-        shell: Rscript {0}
 
-      # --------------------------------------------------------------
-      # 7️⃣ OPTIONAL: quick test that GitHub can be reached
-      # --------------------------------------------------------------
-      - name: Test GitHub access from R
-        run: |
+          # ------------------------------------------------------------------
+          # 2️⃣ Make sure pak sees the token (covers both old & new code paths)
+          # ------------------------------------------------------------------
+          hdr("Configuring GitHub token for pak")
+          Sys.setenv(GITHUB_TOKEN = Sys.getenv("GITHUB_PAT"))   # legacy name
+          options(pak.github_pat = Sys.getenv("GITHUB_PAT"))
+
+          # ------------------------------------------------------------------
+          # 3️⃣ Optional sanity‑check that we can actually hit GitHub
+          # ------------------------------------------------------------------
+          hdr("Testing GitHub access from R (quick sanity check)")
           if (!requireNamespace("gh", quietly = TRUE)) install.packages("gh")
-          gh::gh("/repos/KTH-Library/kthcorpus")
-        shell: Rscript {0}
-        # Comment out if you know the repos are public and you don’t need the test.
+          tryCatch(
+            gh::gh("/repos/KTH-Library/kthcorpus"),
+            error = function(e) {
+              cat("⚠️ GitHub test failed – you may still be offline or token missing\n")
+              cat("Error message:", conditionMessage(e), "\n")
+            }
+          )
 
-      # --------------------------------------------------------------
-      # 8️⃣ Install R dependencies – with conflict diagnostics & fallback
-      # --------------------------------------------------------------
-      - name: Install R dependencies (with conflict diagnostics)
-        id: dep_install
-        env:
-          GITHUB_PAT: ${{ secrets.AGNE_PAT }}
-        run: |
-          # Helper to print nice section headers
-          hdr <- function(txt) {
-            cat("\n=== ", txt, " ===\n", sep = "")
-          }
-
-          # 1️⃣ Show any version‑range conflicts (none in your case)
+          # ------------------------------------------------------------------
+          # 4️⃣ Dependency diagnostics (shows version‑range conflicts, if any)
+          # ------------------------------------------------------------------
           hdr("DIAGNOSTIC: checking for dependency conflicts")
           tryCatch({
             pak::pkg_deps(".", dependencies = TRUE, conflict = "verbose")
@@ -112,7 +132,9 @@ jobs:
             cat("🔎 Diagnostic finished – see above for details.\n")
           })
 
-          # 2️⃣ Normal install – now able to hit GitHub thanks to the PAT
+          # ------------------------------------------------------------------
+          # 5️⃣ Normal install – should now succeed because the token works
+          # ------------------------------------------------------------------
           hdr("ATTEMPTING NORMAL pak install")
           normal_ok <- tryCatch({
             pak::pkg_install(".", dependencies = TRUE)
@@ -122,10 +144,12 @@ jobs:
             FALSE
           })
 
-          # 3️⃣ Fallback – ignore the two GitHub packages if they still fail
+          # ------------------------------------------------------------------
+          # 6️⃣ Fallback – ignore the two GitHub packages if they still fail
+          # ------------------------------------------------------------------
           if (!normal_ok) {
             hdr("FALLBACK: installing while ignoring conflict packages")
-            ignore_pkgs <- c("kthcorpus", "minioclient")   # package names, not repo URLs
+            ignore_pkgs <- c("kthcorpus", "minioclient")   # package *names*
             pak::pkg_install(".", dependencies = TRUE, ignore = ignore_pkgs)
           }
 
@@ -133,6 +157,6 @@ jobs:
         shell: Rscript {0}
 
       # --------------------------------------------------------------
-      # 9️⃣ Run the usual R CMD check
+      # 7️⃣ Run the usual R CMD check
       # --------------------------------------------------------------
       - uses: r-lib/actions/check-r-package@v2
