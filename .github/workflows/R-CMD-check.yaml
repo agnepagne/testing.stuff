@@ -19,13 +19,14 @@ jobs:
       R_KEEP_PKG_SOURCE: yes
 
     steps:
-      - name: Set CRAN mirror for the entire job
-        run: |
-          echo 'options(repos = c(CRAN = "https://cloud.r-project.org"))' >> $HOME/.Rprofile
-        shell: bash
-   
+      # --------------------------------------------------------------
+      # 0️⃣ Checkout the repository
+      # --------------------------------------------------------------
       - uses: actions/checkout@v5
 
+      # --------------------------------------------------------------
+      # 1️⃣ Install OS‑level libcurl (Ubuntu) / curl (Windows)
+      # --------------------------------------------------------------
       - name: Install libcurl on Ubuntu
         if: matrix.config.os == 'ubuntu-latest'
         run: |
@@ -39,19 +40,39 @@ jobs:
           choco install -y curl
         shell: powershell
 
+      # --------------------------------------------------------------
+      # 2️⃣ Export the PAT again (makes sure it survives any caching step)
+      # --------------------------------------------------------------
       - name: Export GitHub PAT for R
         run: echo "GITHUB_PAT=${{ secrets.AGNE_PAT }}" >> $GITHUB_ENV
 
-      - name: Test GitHub access from R
+      # --------------------------------------------------------------
+      # 3️⃣ **New** – set CRAN mirror for the whole job (Linux + Windows)
+      # --------------------------------------------------------------
+      - name: Set CRAN mirror via R_REPOS
         run: |
-          if (!requireNamespace("gh", quietly = TRUE)) install.packages("gh")
-          gh::gh("/repos/KTH-Library/kthcorpus")
-        shell: Rscript {0}
+          echo "R_REPOS=https://cloud.r-project.org" >> $GITHUB_ENV
+        shell: bash
 
+      # --------------------------------------------------------------
+      # 4️⃣ Install pandoc (required by many R packages)
+      # --------------------------------------------------------------
+      - uses: r-lib/actions/setup-pandoc@v2
+
+      # --------------------------------------------------------------
+      # 5️⃣ Install the requested R version (public RSPM)
+      # --------------------------------------------------------------
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: ${{ matrix.config.r }}
+          use-public-rspm: true
+
+      # --------------------------------------------------------------
+      # 6️⃣ Install the *latest* pak (>= 0.6.0) – needed for `ignore`
+      # --------------------------------------------------------------
       - name: Install latest pak (>= 0.6.0)
         run: |
           install.packages("pak", repos = "https://cloud.r-project.org")
-          # Verify version – should be ≥ 0.6.0
           pak_version <- as.character(packageVersion("pak"))
           cat("pak version:", pak_version, "\n")
           if (utils::compareVersion(pak_version, "0.6.0") < 0) {
@@ -59,48 +80,38 @@ jobs:
           }
         shell: Rscript {0}
 
-      - uses: r-lib/actions/setup-pandoc@v2
+      # --------------------------------------------------------------
+      # 7️⃣ OPTIONAL: quick test that GitHub can be reached
+      # --------------------------------------------------------------
+      - name: Test GitHub access from R
+        run: |
+          if (!requireNamespace("gh", quietly = TRUE)) install.packages("gh")
+          gh::gh("/repos/KTH-Library/kthcorpus")
+        shell: Rscript {0}
+        # Comment out if you know the repos are public and you don’t need the test.
 
-      - uses: r-lib/actions/setup-r@v2
-        with:
-          r-version: ${{ matrix.config.r }}
-          use-public-rspm: true
-
-      # ------------------------------------------------------------------
-      # 5️⃣ Custom dependency installation with conflict diagnostics
-      # ------------------------------------------------------------------
+      # --------------------------------------------------------------
+      # 8️⃣ Install R dependencies – with conflict diagnostics & fallback
+      # --------------------------------------------------------------
       - name: Install R dependencies (with conflict diagnostics)
         id: dep_install
         env:
           GITHUB_PAT: ${{ secrets.AGNE_PAT }}
         run: |
-          # --------------------------------------------------------------
-          # Make sure pak is available
-          # --------------------------------------------------------------
-          if (!requireNamespace("pak", quietly = TRUE)) {
-            install.packages("pak", repos = "https://cloud.r-project.org")
-          }
-      
-          # --------------------------------------------------------------
-          # Helper to print a nice header
-          # --------------------------------------------------------------
+          # Helper to print nice section headers
           hdr <- function(txt) {
             cat("\n=== ", txt, " ===\n", sep = "")
           }
-      
-          # --------------------------------------------------------------
-          # 1️⃣ Verbose conflict diagnostics – shows exact version constraints
-          # --------------------------------------------------------------
+
+          # 1️⃣ Show any version‑range conflicts (none in your case)
           hdr("DIAGNOSTIC: checking for dependency conflicts")
           tryCatch({
             pak::pkg_deps(".", dependencies = TRUE, conflict = "verbose")
           }, error = function(e) {
             cat("🔎 Diagnostic finished – see above for details.\n")
           })
-      
-          # --------------------------------------------------------------
-          # 2️⃣ Try a normal pak install (what the official action would do)
-          # --------------------------------------------------------------
+
+          # 2️⃣ Normal install – now able to hit GitHub thanks to the PAT
           hdr("ATTEMPTING NORMAL pak install")
           normal_ok <- tryCatch({
             pak::pkg_install(".", dependencies = TRUE)
@@ -109,18 +120,18 @@ jobs:
             cat("❌ Normal install failed: ", conditionMessage(e), "\n")
             FALSE
           })
-      
-          # --------------------------------------------------------------
-          # 3️⃣ Fallback – ignore the packages that caused the conflict.
-          #    Edit the vector after you read the diagnostic output.
-          # --------------------------------------------------------------
+
+          # 3️⃣ Fallback – ignore the two GitHub packages if they still fail
           if (!normal_ok) {
             hdr("FALLBACK: installing while ignoring conflict packages")
-            ignore_pkgs <- c("sessioninfo", "rcmdcheck")   # ← adjust if needed
+            ignore_pkgs <- c("kthcorpus", "minioclient")   # package names, not repo URLs
             pak::pkg_install(".", dependencies = TRUE, ignore = ignore_pkgs)
           }
-      
+
           hdr("DEPENDENCY RESOLUTION FINISHED")
         shell: Rscript {0}
 
+      # --------------------------------------------------------------
+      # 9️⃣ Run the usual R CMD check
+      # --------------------------------------------------------------
       - uses: r-lib/actions/check-r-package@v2
