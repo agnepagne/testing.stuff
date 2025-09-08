@@ -91,7 +91,7 @@ jobs:
           # 1️⃣  Install the *development* version of pak from GitHub
           # --------------------------------------------------------------
           if (!requireNamespace("remotes", quietly = TRUE)) install.packages("remotes")
-          remotes::install_github("r-lib/pak@master")   # pulls the latest dev commit
+          remotes::install_github("r-lib/pak@main")   # pulls the latest dev commit
           pak_ver <- as.character(packageVersion("pak"))
           cat("📦 pak development version installed:", pak_ver, "\n")
       
