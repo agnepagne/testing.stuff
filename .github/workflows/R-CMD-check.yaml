@@ -15,6 +15,7 @@ jobs:
           - {os: ubuntu-latest,   r: 'release'}
 
     env:
+      # Export the PAT for the whole job (will be re‑exported later as well)
       GITHUB_PAT: ${{ secrets.AGNE_PAT }}
       R_KEEP_PKG_SOURCE: yes
 
@@ -41,13 +42,13 @@ jobs:
         shell: powershell
 
       # --------------------------------------------------------------
-      # 2️⃣ Export the PAT again (makes sure it survives any caching step)
+      # 2️⃣ Re‑export the PAT (ensures it survives any caching step)
       # --------------------------------------------------------------
       - name: Export GitHub PAT for R
         run: echo "GITHUB_PAT=${{ secrets.AGNE_PAT }}" >> $GITHUB_ENV
 
       # --------------------------------------------------------------
-      # 3️⃣ **New** – set CRAN mirror for the whole job (Linux + Windows)
+      # 3️⃣ Set CRAN mirror for the whole job (works on Linux & Windows)
       # --------------------------------------------------------------
       - name: Set CRAN mirror via R_REPOS
         run: |
@@ -73,9 +74,9 @@ jobs:
       - name: Install latest pak (>= 0.6.0)
         run: |
           install.packages("pak", repos = "https://cloud.r-project.org")
-          pak_version <- as.character(packageVersion("pak"))
-          cat("pak version:", pak_version, "\n")
-          if (utils::compareVersion(pak_version, "0.6.0") < 0) {
+          pak_ver <- as.character(packageVersion("pak"))
+          cat("pak version:", pak_ver, "\n")
+          if (utils::compareVersion(pak_ver, "0.6.0") < 0) {
             stop("pak is too old – aborting")
           }
         shell: Rscript {0}
