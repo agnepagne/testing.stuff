@@ -71,38 +71,38 @@ jobs:
       # 6️⃣ **ONE** step that (a) removes old pak, (b) installs newest pak,
       #     (c) sets token options, (d) runs diagnostics & install.
       # --------------------------------------------------------------
-      - name: Install latest pak (≥ 0.7.0) and resolve dependencies
+      - name: Install latest pak (≥ 0.9.0) and resolve dependencies
         env:
-          GITHUB_PAT: ${{ secrets.AGNE_PAT }}
+          GITHUB_PAT: ${{ secrets.AGNE_PAT }}   # make token available to R
         run: |
           # ------------------------------------------------------------------
-          # 0️⃣ Remove any previously cached pak (prevents old version loading)
+          # 0️⃣  Remove any previously cached copy of pak (prevents old version loading)
           # ------------------------------------------------------------------
-          lib_dir <- .libPaths()[1]                # first entry is the writable lib dir
+          lib_dir <- .libPaths()[1]                 # first entry is the writable lib dir
           pak_path <- file.path(lib_dir, "pak")
           if (dir.exists(pak_path)) {
             unlink(pak_path, recursive = TRUE, force = TRUE)
-            cat("Removed old pak at", pak_path, "\n")
+            cat("🗑️ Removed stale pak at", pak_path, "\n")
           }
       
           # ------------------------------------------------------------------
-          # 1️⃣ Install the newest pak from CRAN (0.7.x is current)
+          # 1️⃣  Install the newest pak from CRAN (0.9.0 is current)
           # ------------------------------------------------------------------
           install.packages("pak", repos = "https://cloud.r-project.org")
           pak_ver <- as.character(packageVersion("pak"))
-          cat("pak version installed:", pak_ver, "\n")
-          if (utils::compareVersion(pak_ver, "0.7.0") < 0) {
-            stop("pak version is too old – need ≥ 0.7.0")
+          cat("📦 pak version installed:", pak_ver, "\n")
+          if (utils::compareVersion(pak_ver, "0.9.0") < 0) {
+            stop("❌ pak version is too old – need ≥ 0.9.0")
           }
       
           # ------------------------------------------------------------------
-          # 2️⃣ Make sure pak sees the token (covers both old & new code paths)
+          # 2️⃣  Make sure the token is visible to both old‑style and new‑style code paths
           # ------------------------------------------------------------------
           Sys.setenv(GITHUB_TOKEN = Sys.getenv("GITHUB_PAT"))   # legacy name
           options(pak.github_pat = Sys.getenv("GITHUB_PAT"))
       
           # ------------------------------------------------------------------
-          # 3️⃣ Optional sanity‑check that GitHub is reachable
+          # 3️⃣  (Optional) sanity‑check that GitHub is reachable
           # ------------------------------------------------------------------
           if (!requireNamespace("gh", quietly = TRUE)) install.packages("gh")
           tryCatch(
@@ -114,7 +114,7 @@ jobs:
           )
       
           # ------------------------------------------------------------------
-          # 4️⃣ Dependency diagnostics (helps spot version‑range conflicts)
+          # 4️⃣  Dependency diagnostics (helps spot version‑range conflicts)
           # ------------------------------------------------------------------
           tryCatch({
             pak::pkg_deps(".", dependencies = TRUE, conflict = "verbose")
@@ -123,10 +123,10 @@ jobs:
           })
       
           # ------------------------------------------------------------------
-          # 5️⃣ Normal install – should now succeed
+          # 5️⃣  Normal install – should now succeed (token works, fresh pak loaded)
           # ------------------------------------------------------------------
           normal_ok <- tryCatch({
-            pak::pkg_install(".", dependencies = TRUE)
+            pak::pkg_install(".", dependencies = TRUE)   # no ignore yet
             TRUE
           }, error = function(e) {
             cat("❌ Normal install failed:", conditionMessage(e), "\n")
@@ -134,14 +134,15 @@ jobs:
           })
       
           # ------------------------------------------------------------------
-          # 6️⃣ Fallback – ignore the two GitHub‑only packages if they still fail
+          # 6️⃣  Fallback – ignore the two GitHub‑only packages if they still fail
           # ------------------------------------------------------------------
           if (!normal_ok) {
-            ignore_pkgs <- c("kthcorpus", "minioclient")   # **package names**
+            ignore_pkgs <- c("kthcorpus", "minioclient")   # **package names**, not repo URLs
+            # `ignore` is now a valid argument because we are using pak ≥ 0.9.0
             pak::pkg_install(".", dependencies = TRUE, ignore = ignore_pkgs)
           }
       
-          cat("✅ Dependency resolution finished\n")
+          cat("\n✅ Dependency resolution finished\n")
         shell: Rscript {0}
 
       # --------------------------------------------------------------
