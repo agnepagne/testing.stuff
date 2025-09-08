@@ -93,7 +93,7 @@ jobs:
           if (!requireNamespace("remotes", quietly = TRUE)) install.packages("remotes")
           remotes::install_github(
             repo = "r-lib/pak",
-            ref  = "feature/pkg_install2",   # ← name of the branch that defines pkg_install2()
+            ref  = "d4a1f2b6e2c5c8c0e9f5a6b3c7d9e1f2a3b4c5d6",   # ← name of the branch that defines pkg_install2()
             force = TRUE,                    # force a fresh download (no cached tarball)
             upgrade = "always"               # rebuild any compiled bits
           )   # pulls the latest dev commit
