@@ -126,7 +126,7 @@ jobs:
           # 5️⃣  Normal install – should now succeed (token works, fresh pak loaded)
           # --------------------------------------------------------------
           normal_ok <- tryCatch({
-            pak::pkg_install2(".", dependencies = TRUE)   # <-- new API, supports `ignore`
+            pak:::pkg_install2(".", dependencies = TRUE)   # <-- new API, supports `ignore`
             TRUE
           }, error = function(e) {
             cat("❌ Normal install failed:", conditionMessage(e), "\n")
@@ -139,7 +139,7 @@ jobs:
           if (!normal_ok) {
             ignore_pkgs <- c("kthcorpus", "minioclient")   # **package names**, not repo URLs
             cat("🚧 Falling back – ignoring:", paste(ignore_pkgs, collapse = ", "), "\n")
-            pak::pkg_install2(".", dependencies = TRUE, ignore = ignore_pkgs)
+            pak:::pkg_install2(".", dependencies = TRUE, ignore = ignore_pkgs)
           }
       
           cat("\n✅ Dependency resolution finished\n")
