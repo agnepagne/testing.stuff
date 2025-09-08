@@ -34,6 +34,26 @@ jobs:
           choco install -y curl
         shell: powershell
 
+      - name: Export GitHub PAT for R
+        run: echo "GITHUB_PAT=${{ secrets.AGNE_PAT }}" >> $GITHUB_ENV
+
+      - name: Test GitHub access from R
+        run: |
+          if (!requireNamespace("gh", quietly = TRUE)) install.packages("gh")
+          gh::gh("/repos/KTH-Library/kthcorpus")
+        shell: Rscript {0}
+
+      - name: Install latest pak (>= 0.6.0)
+        run: |
+          install.packages("pak", repos = "https://cloud.r-project.org")
+          # Verify version – should be ≥ 0.6.0
+          pak_version <- as.character(packageVersion("pak"))
+          cat("pak version:", pak_version, "\n")
+          if (utils::compareVersion(pak_version, "0.6.0") < 0) {
+            stop("pak is too old – aborting")
+          }
+        shell: Rscript {0}
+
       - uses: r-lib/actions/setup-pandoc@v2
 
       - uses: r-lib/actions/setup-r@v2
