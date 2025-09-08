@@ -73,16 +73,21 @@ jobs:
       # --------------------------------------------------------------
       - name: Install latest pak (≥ 0.9.0) and resolve dependencies
         env:
-          GITHUB_PAT: ${{ secrets.AGNE_PAT }}   # make token available to R
+          GITHUB_PAT: ${{ secrets.AGNE_PAT }}   # make token visible to R
         run: |
           # ------------------------------------------------------------------
-          # 0️⃣  Remove any previously cached copy of pak (prevents old version loading)
+          # 0️⃣  Remove any stale copy of pak that might sit in the system lib
           # ------------------------------------------------------------------
-          lib_dir <- .libPaths()[1]                 # first entry is the writable lib dir
-          pak_path <- file.path(lib_dir, "pak")
-          if (dir.exists(pak_path)) {
-            unlink(pak_path, recursive = TRUE, force = TRUE)
-            cat("🗑️ Removed stale pak at", pak_path, "\n")
+          # .libPaths()[1] is the writable user library (e.g. /home/runner/.R/library)
+          # .libPaths()[2] is usually the system library (e.g. /usr/local/lib/R/site-library)
+          # We wipe pak from *all* entries to guarantee the child sees only the fresh copy.
+          lib_paths <- .libPaths()
+          for (lp in lib_paths) {
+            pak_dir <- file.path(lp, "pak")
+            if (dir.exists(pak_dir)) {
+              unlink(pak_dir, recursive = TRUE, force = TRUE)
+              cat("🗑️ Removed stale pak from", lp, "\n")
+            }
           }
       
           # ------------------------------------------------------------------
@@ -96,9 +101,11 @@ jobs:
           }
       
           # ------------------------------------------------------------------
-          # 2️⃣  Make sure the token is visible to both old‑style and new‑style code paths
+          # 2️⃣  Make the token visible to every possible code path
           # ------------------------------------------------------------------
-          Sys.setenv(GITHUB_TOKEN = Sys.getenv("GITHUB_PAT"))   # legacy name
+          # Legacy name that old pak understands
+          Sys.setenv(GITHUB_TOKEN = Sys.getenv("GITHUB_PAT"))
+          # Newer name that pak ≥ 0.7 understands
           options(pak.github_pat = Sys.getenv("GITHUB_PAT"))
       
           # ------------------------------------------------------------------
@@ -126,7 +133,8 @@ jobs:
           # 5️⃣  Normal install – should now succeed (token works, fresh pak loaded)
           # ------------------------------------------------------------------
           normal_ok <- tryCatch({
-            pak::pkg_install(".", dependencies = TRUE)   # no ignore yet
+            # Using pkg_install2 – same signature, but guarantees the newer API
+            pak::pkg_install2(".", dependencies = TRUE)
             TRUE
           }, error = function(e) {
             cat("❌ Normal install failed:", conditionMessage(e), "\n")
@@ -138,13 +146,13 @@ jobs:
           # ------------------------------------------------------------------
           if (!normal_ok) {
             ignore_pkgs <- c("kthcorpus", "minioclient")   # **package names**, not repo URLs
-            # `ignore` is now a valid argument because we are using pak ≥ 0.9.0
-            pak::pkg_install(".", dependencies = TRUE, ignore = ignore_pkgs)
+            cat("🚧 Falling back – ignoring:", paste(ignore_pkgs, collapse = ", "), "\n")
+            pak::pkg_install2(".", dependencies = TRUE, ignore = ignore_pkgs)
           }
       
           cat("\n✅ Dependency resolution finished\n")
         shell: Rscript {0}
-
+  
       # --------------------------------------------------------------
       # 7️⃣ Run the usual R CMD check
       # --------------------------------------------------------------
