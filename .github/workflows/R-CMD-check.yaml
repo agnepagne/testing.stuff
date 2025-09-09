@@ -93,12 +93,41 @@ jobs:
           if (!requireNamespace("remotes", quietly = TRUE)) install.packages("remotes")
           remotes::install_github(
             repo = "r-lib/pak",
-            ref  = "d4a1f2b6e2c5c8c0e9f5a6b3c7d9e1f2a3b4c5d6",   # ← name of the branch that defines pkg_install2()
+            ref  = "main",   # ← name of the branch that defines pkg_install2()
             force = TRUE,                    # force a fresh download (no cached tarball)
             upgrade = "always"               # rebuild any compiled bits
           )   # pulls the latest dev commit
           pak_ver <- as.character(packageVersion("pak"))
           cat("📦 pak development version installed:", pak_ver, "\n")
+
+          install_with_ignore <- function(project_root = ".",
+                                          ignore = character(),
+                                          deps = TRUE) {
+            # Resolve the full dependency graph for the project
+            dep_df <- pkg_deps(project_root, dependencies = deps)
+            all_pkgs <- unique(dep_df$package)
+
+            # Drop the packages we want to ignore
+            to_install <- setdiff(all_pkgs, ignore)
+
+            cat("\n🔎 Packages to install (ignoring:",
+                paste(ignore, collapse = ", "), ")\n")
+            cat(paste(to_install, collapse = "\n"), "\n\n")
+
+            # Install each remaining package, catching errors so the loop continues
+            for (pkg in to_install) {
+              cat("🚀 Installing:", pkg, "\n")
+              tryCatch(
+                pkg_install(pkg, dependencies = FALSE),
+                error = function(e) {
+                  cat("⚠️  Skipping", pkg,
+                      "- error:", conditionMessage(e), "\n")
+                }
+              )
+            }
+            cat("\n✅ Finished (ignored:",
+                paste(ignore, collapse = ", "), ")\n")
+          }
       
           # --------------------------------------------------------------
           # 2️⃣  Make the token visible to every possible code path
@@ -131,7 +160,9 @@ jobs:
           # 5️⃣  Normal install – should now succeed (token works, fresh pak loaded)
           # --------------------------------------------------------------
           normal_ok <- tryCatch({
-            pak:::pkg_install2(".", dependencies = TRUE)   # <-- new API, supports `ignore`
+            install_with_ignore(".",
+                                ignore = c("kthcorpus", "minioclient"),
+                                deps = TRUE)
             TRUE
           }, error = function(e) {
             cat("❌ Normal install failed:", conditionMessage(e), "\n")
@@ -144,7 +175,7 @@ jobs:
           if (!normal_ok) {
             ignore_pkgs <- c("kthcorpus", "minioclient")   # **package names**, not repo URLs
             cat("🚧 Falling back – ignoring:", paste(ignore_pkgs, collapse = ", "), "\n")
-            pak:::pkg_install2(".", dependencies = TRUE, ignore = ignore_pkgs)
+            install_with_ignore(".", deps = TRUE, ignore = ignore_pkgs)
           }
       
           cat("\n✅ Dependency resolution finished\n")
